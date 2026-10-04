@@ -60,7 +60,6 @@ static const CanMember CanMembers[] =
         {"HEIZMODUL", 0x500},
         {"BUSKOPPLER", 0x580},
         {"MISCHERMODUL_1", 0x600},
-        {"MISCHERMODUL_2", 0x601},
         {"MISCHERMODUL_3", 0x602},
         {"MISCHERMODUL_4", 0x603},
         {"PC", 0x680},
@@ -83,7 +82,6 @@ typedef enum
     cm_heizmodul,
     cm_buskoppler,
     cm_mischermodul_1,
-    cm_mischermodul_2,
     cm_mischermodul_3,
     cm_mischermodul_4,
     cm_pc,
@@ -1930,18 +1928,13 @@ void processSignalRequests() {
 
 void processAndUpdate(uint32_t can_id, std::vector<uint8_t> msg)
 {
-    // Skip nodes that only broadcast placeholder/unknown values:
-    //  - 0x100 = WPM3 display (FES),  - 0x601 = mixer module 2
-    if (can_id == 0x100 || can_id == 0x601)
-    {
-        return;
-    }
-
     std::string value;
     const CanMember *cm = nullptr;
     const ElsterIndex *ei = processCanMessage(msg, can_id, value, &cm);
 
-    // Skip the OTHER fallback (unmapped nodes such as 0x201) — redundant noise
+    // Skip nodes that are not mapped in CanMembers and only broadcast
+    // placeholder/unknown values (e.g. WPM3 display FES 0x100, mixer module 2
+    // 0x601, redundant DHW duplicates). They fall back to the OTHER member.
     if (cm->CanId == 0x000)
     {
         return;
