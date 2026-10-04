@@ -10,8 +10,9 @@
  * NOTE — sender:
  *   The Boiler (0x180) originally only answered DHW/setpoint reads sent as
  *   FES_COMFORT (0x100), but impersonating the WPM3 display destabilised the bus
- *   (bus-off after prolonged operation). The 0x100 sender override was therefore
- *   removed; all reads use the normal ComfortSoft sender (0x680).
+ *   (bus-off after prolonged operation). The 0x100 sender override was removed and
+ *   all reads use the normal ComfortSoft sender (0x680), which the Boiler answers
+ *   on the CAN B / display connection.
  *
  * Member layout (verified via capture on CAN B / display):
  *   - KESSEL (0x180):  outside temp, DHW actual/setpoint, room setpoints

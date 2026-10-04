@@ -302,9 +302,6 @@ typedef struct {
     const char* signalName;
     unsigned long frequency;     // Request frequency in seconds
     CanMemberType member;        // Use cm_other for "all members"
-    uint32_t senderCanId;        // Optional sender override (0 = ESP node / PC 0x680).
-                                 // Some WPM3 modules (e.g. Boiler 0x180) only answer
-                                 // requests sent as FES_COMFORT (0x100).
 } SignalRequest;
 
 // Forward declarations for the model-specific signal request table.
@@ -455,7 +452,7 @@ const ElsterIndex *processCanMessage(const std::vector<uint8_t> &msg, uint32_t c
     return ei;
 }
 
-void readSignal(const CanMember *cm, const ElsterIndex *ei, uint32_t senderCanId = 0)
+void readSignal(const CanMember *cm, const ElsterIndex *ei)
 {
     constexpr bool use_extended_id = false; // No use of extended ID
     const uint8_t IndexByte1 = static_cast<uint8_t>(ei->Index >> 8);
@@ -484,14 +481,11 @@ void readSignal(const CanMember *cm, const ElsterIndex *ei, uint32_t senderCanId
                 0x00};
     }
 
-    // Sender override: some WPM3 modules only answer requests sent from FES_COMFORT (0x100).
-    uint32_t sender = (senderCanId != 0) ? senderCanId : CanMembers[cm_pc].CanId;
-
     char logmsg[160];
-    snprintf(logmsg, sizeof(logmsg), "READ \"%s\" (0x%04x) AS 0x%03x FROM %s (0x%02x {0x%02x, 0x%02x}): %02x, %02x, %02x, %02x, %02x, %02x, %02x", ei->Name, ei->Index, (unsigned)sender, cm->Name, (unsigned)cm->CanId, readId.first, readId.second, data[0], data[1], data[2], data[3], data[4], data[5], data[6]);
+    snprintf(logmsg, sizeof(logmsg), "READ \"%s\" (0x%04x) FROM %s (0x%02x {0x%02x, 0x%02x}): %02x, %02x, %02x, %02x, %02x, %02x, %02x", ei->Name, ei->Index, cm->Name, (unsigned)cm->CanId, readId.first, readId.second, data[0], data[1], data[2], data[3], data[4], data[5], data[6]);
     ESP_LOGI("readSignal()", "%s", logmsg);
 
-    id(my_can).send_data(sender, use_extended_id, data);
+    id(my_can).send_data(CanMembers[cm_pc].CanId, use_extended_id, data);
 }
 
 void readSignal(const CanMember *cm, const char *elsterName)
@@ -1889,7 +1883,7 @@ void processSignalRequests() {
                     // For cm_other: only send to ONE member per iteration to prevent bursts
                     // Other members will be checked in subsequent iterations
                     if (sentInThisGroup == 0) {
-                        readSignal(member, ei, req.senderCanId);
+                        readSignal(member, ei);
                         requestsSentThisIteration++;
                         sentInThisGroup++;
                         
@@ -1915,7 +1909,7 @@ void processSignalRequests() {
             
             // Check if this signal is overdue (current time >= scheduled time)
             if (now >= nextScheduled) {
-                readSignal(member, ei, req.senderCanId);
+                readSignal(member, ei);
                 requestsSentThisIteration++;
                 
                 // Calculate next scheduled time with random offset (0 to 5% of interval)
