@@ -55,6 +55,7 @@ static const CanMember CanMembers[] =
         {"BEDIENMODUL_3", 0x302},
         {"BEDIENMODUL_4", 0x303},
         {"RAUMFERNFUEHLER", 0x400},
+        {"RAUMFERNFUEHLER_2", 0x401},
         {"MANAGER", 0x480},
         {"HEIZMODUL", 0x500},
         {"BUSKOPPLER", 0x580},
@@ -77,6 +78,7 @@ typedef enum
     cm_bedienmodul_3,
     cm_bedienmodul_4,
     cm_raumfernfuehler,
+    cm_raumfernfuehler_2,
     cm_manager,
     cm_heizmodul,
     cm_buskoppler,
@@ -300,6 +302,9 @@ typedef struct {
     const char* signalName;
     unsigned long frequency;     // Request frequency in seconds
     CanMemberType member;        // Use cm_other for "all members"
+    uint32_t senderCanId;        // Optional sender override (0 = ESP node / PC 0x680).
+                                 // Some WPM3 modules (e.g. Boiler 0x180) only answer
+                                 // requests sent as FES_COMFORT (0x100).
 } SignalRequest;
 
 // Forward declarations for the model-specific signal request table.
@@ -443,13 +448,14 @@ const ElsterIndex *processCanMessage(const std::vector<uint8_t> &msg, uint32_t c
         break;
     }
 
-    ESP_LOGI("processCanMessage()", "%s (0x%02x):\t%s:\t%s\t(%s)", cm.Name, (unsigned)cm.CanId, ei->Name, charValue, ElsterTypeStr[ei->Type]);
+    uint16_t rawIdx = (msg[2] == 0xfa) ? (uint16_t)(msg[4] + (msg[3] << 8)) : (uint16_t)msg[2];
+    ESP_LOGI("processCanMessage()", "%s (0x%02x):\t%s:\t%s\t(idx=0x%04x, %s)", cm.Name, (unsigned)can_id, ei->Name, charValue, (unsigned)rawIdx, ElsterTypeStr[ei->Type]);
 
     signalValue = charValue;
     return ei;
 }
 
-void readSignal(const CanMember *cm, const ElsterIndex *ei)
+void readSignal(const CanMember *cm, const ElsterIndex *ei, uint32_t senderCanId = 0)
 {
     constexpr bool use_extended_id = false; // No use of extended ID
     const uint8_t IndexByte1 = static_cast<uint8_t>(ei->Index >> 8);
@@ -478,11 +484,14 @@ void readSignal(const CanMember *cm, const ElsterIndex *ei)
                 0x00};
     }
 
-    char logmsg[120];
-    snprintf(logmsg, sizeof(logmsg), "READ \"%s\" (0x%04x) FROM %s (0x%02x {0x%02x, 0x%02x}): %02x, %02x, %02x, %02x, %02x, %02x, %02x", ei->Name, ei->Index, cm->Name, (unsigned)cm->CanId, readId.first, readId.second, data[0], data[1], data[2], data[3], data[4], data[5], data[6]);
+    // Sender override: some WPM3 modules only answer requests sent from FES_COMFORT (0x100).
+    uint32_t sender = (senderCanId != 0) ? senderCanId : CanMembers[cm_pc].CanId;
+
+    char logmsg[160];
+    snprintf(logmsg, sizeof(logmsg), "READ \"%s\" (0x%04x) AS 0x%03x FROM %s (0x%02x {0x%02x, 0x%02x}): %02x, %02x, %02x, %02x, %02x, %02x, %02x", ei->Name, ei->Index, (unsigned)sender, cm->Name, (unsigned)cm->CanId, readId.first, readId.second, data[0], data[1], data[2], data[3], data[4], data[5], data[6]);
     ESP_LOGI("readSignal()", "%s", logmsg);
 
-    id(my_can).send_data(CanMembers[cm_pc].CanId, use_extended_id, data);
+    id(my_can).send_data(sender, use_extended_id, data);
 }
 
 void readSignal(const CanMember *cm, const char *elsterName)
@@ -869,8 +878,10 @@ void publishTime()
     // Publish discovery (only once - cached)
     publishCalculatedSensorDiscovery(calculatedSensors[1]);
     
-    // Validate that all values have been received
-    if (lastStunde < 0 || lastMinute < 0 || lastSekunde < 0) {
+    // Validate that the essential values have been received.
+    // Some models (e.g. WPL 10 AC / WPM3) do not provide SEKUNDE, so treat it
+    // as optional and fall back to 0 rather than refusing to publish.
+    if (lastStunde < 0 || lastMinute < 0) {
         ESP_LOGW("CALC", "Cannot publish time: sensors not initialized (Stunde=%d, Minute=%d, Sekunde=%d)", 
                  lastStunde, lastMinute, lastSekunde);
         return;
@@ -878,7 +889,7 @@ void publishTime()
     
     int istunde = lastStunde;
     int iminute = lastMinute;
-    int isekunde = lastSekunde;
+    int isekunde = (lastSekunde < 0) ? 0 : lastSekunde;
     
     // Log raw values for debugging
     // ESP_LOGD("CALC", "Time values: Stunde=%d, Minute=%d, Sekunde=%d", istunde, iminute, isekunde);
@@ -1878,7 +1889,7 @@ void processSignalRequests() {
                     // For cm_other: only send to ONE member per iteration to prevent bursts
                     // Other members will be checked in subsequent iterations
                     if (sentInThisGroup == 0) {
-                        readSignal(member, ei);
+                        readSignal(member, ei, req.senderCanId);
                         requestsSentThisIteration++;
                         sentInThisGroup++;
                         
@@ -1904,7 +1915,7 @@ void processSignalRequests() {
             
             // Check if this signal is overdue (current time >= scheduled time)
             if (now >= nextScheduled) {
-                readSignal(member, ei);
+                readSignal(member, ei, req.senderCanId);
                 requestsSentThisIteration++;
                 
                 // Calculate next scheduled time with random offset (0 to 5% of interval)
@@ -1925,10 +1936,22 @@ void processSignalRequests() {
 
 void processAndUpdate(uint32_t can_id, std::vector<uint8_t> msg)
 {
- 
+    // Skip nodes that only broadcast placeholder/unknown values:
+    //  - 0x100 = WPM3 display (FES),  - 0x601 = mixer module 2
+    if (can_id == 0x100 || can_id == 0x601)
+    {
+        return;
+    }
+
     std::string value;
     const CanMember *cm = nullptr;
     const ElsterIndex *ei = processCanMessage(msg, can_id, value, &cm);
+
+    // Skip the OTHER fallback (unmapped nodes such as 0x201) — redundant noise
+    if (cm->CanId == 0x000)
+    {
+        return;
+    }
 
     // Skip permanently blacklisted signals
     if (isPermanentlyBlacklisted(ei->Name))
