@@ -2,9 +2,12 @@
 .vscode/settings.json
 esphome/ha-stiebel-control/config.h
 tests/run_tests
+tests/*.o
+tests/*.obj
 .DS_Store
 .vscode
 secrets.yaml
+config/
 /venv
 
 # Added by cargo
