@@ -111,6 +111,15 @@ loadpoints:
 Hinweis: ohne `continuous` bedeutet „Off" = reduced (= Standby). Im **Smart**-Modus entscheidet evcc
 Überschuss/Börse → Boost. Damit realisierst du exakt „aus → Standby, Überschuss → Boost".
 
+**Batterie-Schutz („nie auf Batterie heizen") — WICHTIG:**
+Eine entladende Batterie maskiert den Netzbezug (< als `disable.threshold`) → evcc lässt die WP laufen
+(bleibt dann im Normal-Modus „2"). Das verhindern die **Batterie-Parameter**, NICHT der Loadpoint-`priority`:
+- Web-UI → Batterie: **„Battery usage" (prioritySoc)** z.B. 60 % — bis dahin wird die Batterie zuerst geladen,
+  kein Überschuss für die WP (→ Standby).
+- **„Battery as charging buffer" (bufferSoc)** z.B. 75 % — nur Speicher oberhalb davon darf an die WP gehen.
+- Empfohlen bei Batterie: `site: residualPower: 100–300` (evcc.yaml), damit die Batterie echten Überschuss sieht.
+- Loadpoint-`priority` regelt nur die Rangfolge zwischen mehreren Loadpoints (nicht Batterieverbrauch).
+
 ---
 
 ## 4. HA-Monitor (Watchdog + Offline-Erkennung)
