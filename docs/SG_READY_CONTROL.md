@@ -65,11 +65,19 @@ chargers:
             source: mqtt
             topic: heatingpump/MANAGER/SG_READY_STATE/set
             payload: "3 - Empfohlen"
-    # optional: aktuellen Modus für evcc-UI zurücklesen
+    # aktuellen Modus für die evcc-UI zurücklesen — WICHTIG: String → int
+    # via regex-Pipeline (evcc-map kann nur int64, keine Strings)
     getmode:
-      source: mqtt
-      topic: heatingpump/MANAGER/SG_READY_STATE/state
-      # map: "1 - …"→1, "2 - …"→2, "3/4 - …"→3
+      source: map
+      values:
+        1: 1
+        2: 2
+        3: 3
+        4: 3        # "Zwang" zählt als boost (falls je gesetzt)
+      get:
+        source: mqtt
+        topic: heatingpump/MANAGER/SG_READY_STATE/state
+        regex: '^\s*(\d+)'   # zieht die führende Ziffer aus "2 - Normal"
 
 loadpoints:
   - title: Wärmepumpe
