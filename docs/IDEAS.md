@@ -84,12 +84,16 @@ Boost-Stärke: `heatingpump/MANAGER/SG_READY_BOOST_STATE3/set` (z.B. `5.0`) und 
   schreibt die Betriebsart direkt (funktioniert in jedem Modus).
 
 **Failover in Ebenen:**
-1. **Firmware-Watchdog** (`checkSgReadyWatchdog`, 10 min): kein SG-Ready-Befehl in
-   `SG_READY_WATCHDOG_MS` → zurück auf `2 - Normal`. Deckt evcc/Netz/HA-Ausfall + weiche
-   ESP-Fehler ab. Wirkt NICHT bei ESP-Spannungsverlust.
-2. **WPM-Zeitprogramm** deckt ESP-Spannungsverlust ab (wenn „Normal" = Programmierbetrieb).
-3. **HA externer Dog** (läuft nicht auf ESP): MQTT-LWT `heatingpump/status` == `offline` →
-   Benachrichtigung; optional vorhandene Shelly als unabhängiger SG-Ready-Fallback.
+1. **HA-Monitor (scharfer, kontextualer Watchdog)** — primäre Absicherung, sieht PV/Netz:
+   Automation (5-min-Scan): wenn `select.heatingpump_sg_ready_state` in `3/4` seit **≥ 1 h**
+   UND PV **< 200 W** → zurück auf `2 - Normal` (+ optional Notification). Zusätzlich
+   MQTT-LWT `heatingpump/status` == `offline` → Benachrichtigung, optional Shelly auf Freigabe.
+2. **Firmware-Watchdog** (`checkSgReadyWatchdog`, **3 h**, **nur bei Boost 3/4**):
+   greift nur, wenn ein Boost länger als 3 h ohne Befehl aktiv ist → zurück auf
+   `2 - Normal`. **Standby (1) wird nie automatisch beendet** (gewollter Langzeitzustand).
+   Letztes Netz bei gleichzeitigem Ausfall von evcc+HA (Wrap in < 1 Tag begrenzt).
+3. **WPM-Zeitprogramm** deckt ESP-Spannungsverlust ab („Normal" idealerweise als
+   Programmierbetrieb, sodass die WP in ihren Zeitfenstern weiterheizt).
 
 **evcc-Konfigurationswege:**
 - **sgready-relay** (`type: sgready-relay`, boost/dim-Relais): Shelly-gekoppelt, WPM nutzt
