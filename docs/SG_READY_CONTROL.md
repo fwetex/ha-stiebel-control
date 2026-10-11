@@ -79,6 +79,24 @@ chargers:
         topic: heatingpump/MANAGER/SG_READY_STATE/state
         regex: '^\s*(\d+)'   # zieht die führende Ziffer aus "2 - Normal"
 
+    # optional — nur Anzeige/Historie, NICHT steuerungsrelevant:
+    # temp: aktuelle Speichertemperatur (roh, ohne +3.9-Kalibrierung des HA-Sensors)
+    temp:
+      source: mqtt
+      topic: heatingpump/KESSEL/SPEICHERISTTEMP/state
+    # energy: elektrische Aufnahme (Heizung + WW, Summenzähler MWh → kWh)
+    energy:
+      source: combined
+      combine:
+        - source: mqtt
+          topic: heatingpump/HEIZMODUL/EL_AUFNAHMELEISTUNG_HEIZ_SUM_MWH/state
+          scale: 1000
+        - source: mqtt
+          topic: heatingpump/HEIZMODUL/EL_AUFNAHMELEISTUNG_WW_SUM_MWH/state
+          scale: 1000
+    # power: es gibt KEINE Live-Leistung über den ESP → nur über separaten
+    # Stromzähler (z.B. Shelly 3EM), falls für UI gewünscht.
+
 loadpoints:
   - title: Wärmepumpe
     charger: wpl10
