@@ -105,7 +105,7 @@ mqtt:
   # Keepalive for connection monitoring
   keepalive: 15s
   # Disable reboot on MQTT disconnect - will keep trying to reconnect indefinitely
-  reboot_timeout: 0s
+  reboot_timeout: 600s
   on_connect:
     - logger.log:
         level: INFO
@@ -337,10 +337,21 @@ interval:
 
 #########################################
 #                                       #
+#   DEBUG                               #
+#                                       #
+#########################################
+debug:
+  update_interval: 60s
+
+#########################################
+#                                       #
 #   TEXT SENSOREN                       #
 #                                       #
 #########################################
 text_sensor:
+  - platform: debug
+    reset_reason:
+      name: "Reset Reason"
   #########################################
   #                                       #
   #   HOME ASSISTANT TEXT SENSOREN        #
@@ -440,9 +451,16 @@ button:
 #                                       #
 #########################################
 wifi:
-  ssid: !secret wifi_ssid
-  password: !secret wifi_password
+  networks:
+    - ssid: !secret wifi_ssid
+      password: !secret wifi_password
+      bssid: f4:92:bf:5c:66:e8
   use_address: 10.101.50.52  # production device IP for OTA (mDNS heatingpump.local resolves to this)
+  manual_ip:
+    static_ip: 10.101.50.52
+    gateway: 10.101.50.1
+    subnet: 255.255.254.0
+    dns1: 10.101.50.1
   fast_connect: true
   power_save_mode: none
   reboot_timeout: 5min
@@ -503,6 +521,19 @@ sensor:
       if (dBm < MIN_DBM) dBm = MIN_DBM;
       if (dBm > MAX_DBM) dBm = MAX_DBM;
       return ((dBm - MIN_DBM) / (MAX_DBM - MIN_DBM)) * 100;
+
+  # Uptime — resets to 0 on reboot; helps diagnose disconnects (reboot vs link loss)
+  - platform: uptime
+    name: "Uptime"
+    icon: "mdi:timer-outline"
+    update_interval: 60s
+    id: uptime_sensor
+
+  # Free heap — if this trends down over time, a memory leak is killing the API
+  - platform: debug
+    free:
+      name: "Free Heap"
+      icon: "mdi:memory"
 
   # -----------------------------------------------------------------------
   # COP energy accumulator sensors (universal — present on all Elster models)
