@@ -9,18 +9,16 @@ Gesammelte Ideen aus dem Betrieb der WPL 10 AC (WPM3, CAN B / 50 kbps).
 **Problem:** Die WPM3-Uhr driftet im Betrieb deutlich, die Kanäle `calculated/date` und
 `calculated/time` weichen ab.
 
-**Ist-Stand:** Datum/Uhrzeit werden manuell über die HA-Buttons „Update Datum"/„Update Uhrzeit"
-gesetzt (Text-Sensoren an `input_datetime.*` → `updateDate()`/`updateTime()` →
-`writeSignal(cm_manager, JAHR/MONAT/TAG/STUNDE/MINUTE/SEKUNDE)`).
-
-**Idee:**
-- MQTT-Topic zum Setzen der Uhrzeit, z.B. `heatingpump/MANAGER/DATETIME/set`
-  (Payload `YYYY-MM-DD HH:MM:SS`) → im `on_message`-Handler parsen und `updateDate`/`updateTime`
-  aufrufen (Pfad existiert bereits).
-- Damit kann HA (oder ein NTP-Bridge) die Zeit **zyklisch synchronisieren**
-  (z.B. jeden Tag/bei Drift-Abweichung > 30 s).
-- Optional: Zeit zuerst vom WPM3 **lesen** und mit der HA-Zeit vergleichen
-  (Drift erkennen) und nur bei Abweichung schreiben.
+**Stand (umgesetzt):**
+- MQTT-Topic **`heatingpump/DATETIME/set`** mit Payload **`YYYY-MM-DD HH:MM:SS`** setzt
+  Datum **und** Uhrzeit in einem Rutsch (`updateDateTime`). Das Payload wird **strikt
+  validiert** — bei ungültigem Format wird gar nichts geschrieben (keine Teil-Writes mehr).
+- `updateTime`/`updateDate` (Buttons „Update Uhrzeit"/„Update Datum") validieren ebenfalls
+  strikt (`HH:MM:SS` / `YYYY-MM-DD`) und verweigern kaputte HA-Inputs mit klarer Log-Meldung.
+- **Test:** `mosquitto_pub -h <broker> -u iotuser -p <pass> -t heatingpump/DATETIME/set -m "2026-10-11 17:30:00"`
+- **Idee für Drift-Sync:** HA-Automation, die (z.B. stündlich) die HA-Uhrzeit per
+  `heatingpump/DATETIME/set` an die WPM pusht; oder erst die WPM-Zeit lesen, bei
+  Abweichung >30 s schreiben.
 
 ---
 
