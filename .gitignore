@@ -4,6 +4,7 @@ esphome/ha-stiebel-control/config.h
 tests/run_tests
 tests/*.o
 tests/*.obj
+tests/*.d
 .DS_Store
 .vscode
 secrets.yaml
