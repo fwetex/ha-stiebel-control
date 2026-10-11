@@ -54,3 +54,47 @@ Gesammelte Ideen aus dem Betrieb der WPL 10 AC (WPM3, CAN B / 50 kbps).
   machen oder `MAX_REQUESTS_PER_ITERATION` drosseln.
 - `calculated/time`-Feld: Die WPM3 liefert kein SEKUNDE (bereits optional behandelt);
   STUNDE-Readback kommt (bestätigt). `not initialized`-Warnung evtl. nur nach Boot.
+
+---
+
+## 3. PV-/Strompreis-Steuerung der WP über SG Ready (Sollzustand-Referenz)
+
+**Ziel:** Wärmepumpe bevorzugt mit PV-Überschuss bzw. in günstigen Tarif-/CO₂-Fenstern laufen
+lassen, **nie auf Batterie** heizen. Regellogik liegt in **evcc**; die WP wird über den ESP
+(CAN) angesteuert.
+
+**Zustandsmodell (evcc → ESP via MQTT, ein Topic):**
+
+| evcc-Zustand | MQTT (`heatingpump/MANAGER/SG_READY_STATE/set`) | Wirkung |
+|---|---|---|
+| Aus / unter Schwelle | `1 - EVU Sperre` | `PROGRAMMSCHALTER` = **Bereitschaftsbetrieb** (Frostschutz aktiv ✓), Solltwerte zurückgesetzt |
+| Ein (Freigabe) | `2 - Normal` | **Komfortbetrieb** + Original-Solltwerte wiederhergestellt |
+| Überschuss | `3 - Empfohlen` | Komfort + `SPEICHERSOLLTEMP` (+`BOOST_STATE3`) |
+| viel Überschuss | `4 - Zwang` | Komfort + stärkerer WW-/Raum-Boost (`BOOST_STATE4`) |
+
+Boost-Stärke: `heatingpump/MANAGER/SG_READY_BOOST_STATE3/set` (z.B. `5.0`) und `..._STATE4/set`.
+
+**Design-Leitplanken (vom 2026-10-11-Review):**
+- „Normal" = **Programmierbetrieb** (WPM-Eigenschema) als Baseline, damit die WP bei
+  Komplett-Ausfall des ESP/evcc in ihren konfigurierten Zeitfenstern weiterheizt.
+  Fail-Richtung = „Heizung läuft", nie „Heizung tot".
+- „Aus" nur für **kurze, bewusste Fenster** (Legionellenschutz >60 °C zyklisch beachten).
+- Kein schnelles Aus-/An-Pendeln: evcc `enable`/`disable`-**Delay** ≥10–15 min.
+- SG-Ready-Kontakt/ISG-Modus-Einschränkung gilt für den Modbus-Pfad; unser CAN-Pfad
+  schreibt die Betriebsart direkt (funktioniert in jedem Modus).
+
+**Failover in Ebenen:**
+1. **Firmware-Watchdog** (`checkSgReadyWatchdog`, 10 min): kein SG-Ready-Befehl in
+   `SG_READY_WATCHDOG_MS` → zurück auf `2 - Normal`. Deckt evcc/Netz/HA-Ausfall + weiche
+   ESP-Fehler ab. Wirkt NICHT bei ESP-Spannungsverlust.
+2. **WPM-Zeitprogramm** deckt ESP-Spannungsverlust ab (wenn „Normal" = Programmierbetrieb).
+3. **HA externer Dog** (läuft nicht auf ESP): MQTT-LWT `heatingpump/status` == `offline` →
+   Benachrichtigung; optional vorhandene Shelly als unabhängiger SG-Ready-Fallback.
+
+**evcc-Konfigurationswege:**
+- **sgready-relay** (`type: sgready-relay`, boost/dim-Relais): Shelly-gekoppelt, WPM nutzt
+  eigenen SG-Ready-Kontakt — kein ESP nötig, evcc-nativ.
+- **custom → MQTT → ESP** (relaislos, voller CAN-Umfang): evcc-Custom-Gerät publiziert die
+  vier Zustände auf das `/set`-Topic. Dann Watchdog Pflicht.
+- **Modbus/ISG** (`template: stiebel-wpm`): nur falls ISG vorhanden; keine Leistungswerte,
+  SG-Ready nur im WW+Auto-Modus.
