@@ -414,6 +414,16 @@ static void resetDiscoveryState() {
     mqtt_client_instance().clear();
 }
 
+// Look a writable number up by signal name. The table is model-gated and its order
+// is an implementation detail, so tests must not index it positionally.
+static const WritableNumberConfig& writableNumber(const char* signalName) {
+    for (size_t i = 0; i < WRITABLE_NUMBER_COUNT; i++) {
+        if (strcmp(writableNumbers[i].signalName, signalName) == 0) return writableNumbers[i];
+    }
+    FAIL("no writable number named " << signalName);
+    return writableNumbers[0];  // unreachable: FAIL() aborts the test case
+}
+
 // ============================================================================
 // publishMqttState
 // ============================================================================
@@ -426,6 +436,80 @@ TEST_CASE("publishMqttState: publishes to correct topic", "[mqtt]") {
     publishMqttState(mgr, ei, "21.5");
     REQUIRE(mqttTopicPublished("heatingpump/MANAGER/AUSSENTEMP/state"));
     CHECK(mqttFindPayload("AUSSENTEMP/state") == "21.5");
+}
+
+// ============================================================================
+// MAX_PUBLISHED_SIGNALS — the memory bound must not freeze known entities
+// ============================================================================
+
+TEST_CASE("signal cap: blocks NEW signals but keeps updating known ones", "[mqtt]") {
+    resetDiscoveryState();
+    uidCache.clear();
+
+    const ElsterIndex* known = GetElsterIndex("RAUMSOLLTEMP_I");
+    const ElsterIndex* fresh = GetElsterIndex("RAUMSOLLTEMP_II");
+    REQUIRE(known != nullptr);
+    REQUIRE(fresh != nullptr);
+    const CanMember& cm = CanMembers[cm_manager];
+
+    // Publish one signal so it counts as known
+    updateSensor(cm, known, "48.5");
+    REQUIRE(mqttFindPayload("/RAUMSOLLTEMP_I/state") == "48.5");
+    mqtt_client_instance().clear();
+
+    // Fill the discovered set up to the cap
+    while (discoveredSignals.size() < MAX_PUBLISHED_SIGNALS) {
+        discoveredSignals.insert("filler_" + std::to_string(discoveredSignals.size()));
+    }
+
+    // A signal that was never published is now ignored — no discovery, no state
+    updateSensor(cm, fresh, "22.5");
+    CHECK(mqtt_client_instance().messages.empty());
+
+    // …but an already-known signal keeps updating (the cap must not freeze it)
+    updateSensor(cm, known, "49.0");
+    CHECK(mqttFindPayload("/RAUMSOLLTEMP_I/state") == "49.0");
+}
+
+// ============================================================================
+// Sentinel values — unknown instead of a stale retained reading
+// ============================================================================
+
+// A sentinel means "not available" (see isInvalidSignalValue). For an entity that
+// already exists in HA, publishing `None` makes it read as unknown; an empty
+// payload would be IGNORED for numeric sensors and would leave the stale value.
+TEST_CASE("sentinel value: known signal publishes 'None', not a stale reading", "[mqtt]") {
+    resetDiscoveryState();
+    uidCache.clear();
+
+    const ElsterIndex* ei = GetElsterIndex("RAUMSOLLTEMP_I");
+    REQUIRE(ei != nullptr);
+    const CanMember& cm = CanMembers[cm_manager];
+
+    // A real value first, so the entity exists in HA
+    updateSensor(cm, ei, "48.5");
+    REQUIRE(mqttFindPayload("/RAUMSOLLTEMP_I/state") == "48.5");
+    mqtt_client_instance().clear();
+
+    // Now the sentinel: exactly one publish, payload None, no re-discovery
+    updateSensor(cm, ei, "-255");
+    CHECK(mqtt_client_instance().messages.size() == 1);
+    CHECK(mqttFindPayload("/RAUMSOLLTEMP_I/state") == "None");
+    CHECK_FALSE(mqttTopicPublished("homeassistant/"));
+}
+
+// The ghost-entity protection must survive: a signal that was never published
+// stays silent even when its value is a sentinel.
+TEST_CASE("sentinel value: an unknown signal creates no entity", "[mqtt]") {
+    resetDiscoveryState();
+    uidCache.clear();
+
+    const ElsterIndex* ei = GetElsterIndex("RAUMSOLLTEMP_II");
+    REQUIRE(ei != nullptr);
+
+    updateSensor(CanMembers[cm_manager], ei, "-32768");
+
+    CHECK(mqtt_client_instance().messages.empty());
 }
 
 TEST_CASE("publishMqttState: skips empty value", "[mqtt]") {
@@ -931,13 +1015,13 @@ TEST_CASE("publishCalculatedSensorDiscovery: binary sensor includes payload_on/o
 
 TEST_CASE("publishWritableNumberDiscovery: publishes to homeassistant/number", "[mqtt]") {
     resetDiscoveryState();
-    publishWritableNumberDiscovery(writableNumbers[0], true);
+    publishWritableNumberDiscovery(writableNumber("WW_SOLL"), true);
     CHECK(mqttTopicPublished("homeassistant/number/heatingpump/"));
 }
 
 TEST_CASE("publishWritableNumberDiscovery: payload contains command_topic and state_topic", "[mqtt]") {
     resetDiscoveryState();
-    publishWritableNumberDiscovery(writableNumbers[0], true);
+    publishWritableNumberDiscovery(writableNumber("WW_SOLL"), true);
     std::string payload = mqttFindPayload("homeassistant/number/heatingpump/");
     CHECK(payload.find("\"command_topic\"") != std::string::npos);
     CHECK(payload.find("/set\"") != std::string::npos);
@@ -946,7 +1030,7 @@ TEST_CASE("publishWritableNumberDiscovery: payload contains command_topic and st
 
 TEST_CASE("publishWritableNumberDiscovery: payload contains min, max, step", "[mqtt]") {
     resetDiscoveryState();
-    publishWritableNumberDiscovery(writableNumbers[0], true);
+    publishWritableNumberDiscovery(writableNumber("WW_SOLL"), true);
     std::string payload = mqttFindPayload("homeassistant/number/heatingpump/");
     CHECK(payload.find("\"min\"") != std::string::npos);
     CHECK(payload.find("\"max\"") != std::string::npos);
@@ -955,31 +1039,45 @@ TEST_CASE("publishWritableNumberDiscovery: payload contains min, max, step", "[m
 
 TEST_CASE("publishWritableNumberDiscovery: SG_READY signal uses main device (no via_device)", "[mqtt]") {
     resetDiscoveryState();
-    publishWritableNumberDiscovery(writableNumbers[2], true);  // SG_READY_BOOST_STATE3
+    publishWritableNumberDiscovery(writableNumber("SG_READY_BOOST_STATE3"), true);
     std::string payload = mqttFindPayload("homeassistant/number/heatingpump/");
     CHECK(payload.find("via_device") == std::string::npos);
 }
 
 TEST_CASE("publishWritableNumberDiscovery: regular signal uses sub-device with via_device", "[mqtt]") {
     resetDiscoveryState();
-    publishWritableNumberDiscovery(writableNumbers[6], true);  // RAUMSOLLTEMP_I (sub-device)
+    publishWritableNumberDiscovery(writableNumber("RAUMSOLLTEMP_I"), true);
     std::string payload = mqttFindPayload("homeassistant/number/heatingpump/");
     CHECK(payload.find("\"via_device\"") != std::string::npos);
 }
 
 TEST_CASE("publishWritableNumberDiscovery: onMainDevice flag routes to main device (no via_device)", "[mqtt]") {
     resetDiscoveryState();
-    publishWritableNumberDiscovery(writableNumbers[0], true);  // WW_SOLL (onMainDevice)
+    publishWritableNumberDiscovery(writableNumber("WW_SOLL"), true);
     std::string payload = mqttFindPayload("homeassistant/number/heatingpump/");
     CHECK(payload.find("via_device") == std::string::npos);
 }
 
 TEST_CASE("publishWritableNumberDiscovery: cached — second call skips publish", "[mqtt]") {
     resetDiscoveryState();
-    publishWritableNumberDiscovery(writableNumbers[0]);
+    publishWritableNumberDiscovery(writableNumber("WW_SOLL"));
     mqtt_client_instance().clear();
-    publishWritableNumberDiscovery(writableNumbers[0]);
+    publishWritableNumberDiscovery(writableNumber("WW_SOLL"));
     CHECK(mqtt_client_instance().messages.empty());
+}
+
+// The ECO / reduced DHW setpoint is an independent register on every model except
+// the WPL10AC/WPM3, where WW_SOLL keeps it in sync with the normal setpoint
+// instead (SG_READY_SYNC_DHW_SETTINGS). The entity therefore only exists in the
+// other models' builds — the native test build defines no HA_MODEL_*, so this
+// covers the non-WPL10AC branch.
+TEST_CASE("writableNumbers: ECO DHW setpoint exists on non-WPL10AC models", "[mqtt]") {
+    const WritableNumberConfig& eco = writableNumber("EINSTELL_SPEICHERSOLLTEMP2");
+    CHECK(eco.member == cm_manager);
+    CHECK(eco.min == 20.0f);
+    CHECK(eco.max == 60.0f);
+    CHECK(eco.step == 1.0f);
+    CHECK(std::string(eco.friendlyName).length() > 0);
 }
 
 // ============================================================================
@@ -1121,6 +1219,29 @@ TEST_CASE("isValidDateString", "[datetime]") {
     CHECK_FALSE(isValidDateString("2026-10-1"));        // truncated day
 }
 
+// The digit/separator checks alone accept "2026-13-99", which would be written
+// straight into the heat pump's clock (the time part is already range-checked).
+TEST_CASE("isValidDateString: field ranges and leap years", "[datetime]") {
+    // valid
+    CHECK(isValidDateString("2026-12-31"));
+    CHECK(isValidDateString("2026-01-01"));
+    CHECK(isValidDateString("2024-02-29"));   // leap year
+    CHECK(isValidDateString("2000-02-29"));   // century leap year (divisible by 400)
+
+    // month out of range
+    CHECK_FALSE(isValidDateString("2026-00-11"));
+    CHECK_FALSE(isValidDateString("2026-13-11"));
+    CHECK_FALSE(isValidDateString("2026-99-11"));
+
+    // day out of range for that month
+    CHECK_FALSE(isValidDateString("2026-10-00"));
+    CHECK_FALSE(isValidDateString("2026-10-32"));
+    CHECK_FALSE(isValidDateString("2026-04-31"));  // April has 30 days
+    CHECK_FALSE(isValidDateString("2026-02-30"));  // February has 28
+    CHECK_FALSE(isValidDateString("2025-02-29"));  // not a leap year
+    CHECK_FALSE(isValidDateString("1900-02-29"));  // century non-leap (divisible by 100, not 400)
+}
+
 // The exact regression: updateDateTime must split "YYYY-MM-DD HH:MM:SS" before
 // calling the length-checking validators (the full 19-char string fails both).
 TEST_CASE("updateDateTime full timestamp split: date and time parts validate separately", "[datetime]") {
@@ -1137,4 +1258,113 @@ TEST_CASE("updateDateTime full timestamp split: date and time parts validate sep
     // Passing the full 19-char string to the date validator must fail
     // (this is what always rejected a valid timestamp before the fix).
     CHECK_FALSE(isValidDateString(full));
+}
+
+// ============================================================================
+// deadlineReached — millis() wrap-safe scheduling
+// ============================================================================
+
+TEST_CASE("deadlineReached: ordinary deadlines", "[timing]") {
+    CHECK_FALSE(deadlineReached(1000, 2000));  // not yet
+    CHECK(deadlineReached(2000, 2000));        // exactly due
+    CHECK(deadlineReached(3000, 2000));        // overdue
+    CHECK(deadlineReached(0, 0));              // armed and due at the same instant
+}
+
+// The bug: `now >= deadline` reports a deadline set just before the ~49.7 day
+// millis() wrap as ~49 days in the future, so whatever it schedules stalls.
+TEST_CASE("deadlineReached: a deadline set before the millis() wrap is still due", "[timing]") {
+    const uint32_t beforeWrap = 0xFFFFFF00u;  // set 256 ms before the wrap
+    const uint32_t afterWrap  = 0x00000100u;  // 256 ms later
+
+    CHECK(deadlineReached(afterWrap, beforeWrap));
+    // the comparison this replaced would say "not due" and stall for ~49 days:
+    CHECK_FALSE(afterWrap >= beforeWrap);
+}
+
+// Documented limit: anything more than half the range in the future reads as a
+// wrapped past deadline. Intervals must stay far below this.
+TEST_CASE("deadlineReached: deadlines beyond half the range are not representable", "[timing]") {
+    CHECK_FALSE(deadlineReached(0, 0x80000000u));
+}
+
+// ============================================================================
+// processSignalRequests — round-robin start index
+// ============================================================================
+
+// MAX_REQUESTS_PER_ITERATION is 1, so one call sends at most ONE request. If the
+// walk restarts at slot 0 every call, the lowest-indexed due slot wins every
+// call and the slots behind it are only ever served in the rare second when
+// nothing earlier is due. The walk must therefore resume where it stopped.
+TEST_CASE("processSignalRequests: trailing slots are served (round-robin start index)", "[can]") {
+    const ElsterIndex* ei = GetElsterIndex("RAUMSOLLTEMP_I");
+    REQUIRE(ei != nullptr);
+
+    requestManagerStarted = true;  // skip the one-time schedule build
+    pollSlots.clear();
+    pollSlots.push_back({&CanMembers[cm_manager], ei, 0,     0, 0});  // re-armed below
+    pollSlots.push_back({&CanMembers[cm_manager], ei, 60000, 0, 0});
+    pollSlots.push_back({&CanMembers[cm_manager], ei, 60000, 0, 0});
+    pollSlots.push_back({&CanMembers[cm_manager], ei, 60000, 0, 0});
+
+    for (int call = 0; call < 4; call++) {
+        pollSlots[0].nextAt = 0;   // slot 0 is always due…
+        processSignalRequests();   // …so without rotation it wins every call
+    }
+
+    // A served slot is rescheduled to now + intervalMs + jitter; millis() is 0 in
+    // the test build, so any slot that was polled now has nextAt > 0.
+    CHECK(pollSlots[1].nextAt > 0);
+    CHECK(pollSlots[2].nextAt > 0);
+    CHECK(pollSlots[3].nextAt > 0);
+
+    pollSlots.clear();  // do not leak the synthetic schedule into other tests
+}
+
+// ============================================================================
+// CAN TX deferral — a driver with few TX buffers (MCP2515) refuses frames
+// ============================================================================
+
+// The SG Ready burst issues up to 8 frames (write+read for mode, DHW and room)
+// from a single lambda. On the ESP32-S3 the TWAI driver queues 64 deep, so nothing
+// is refused; the MCP2515 has three TX buffers and returns ERROR_ALLTXBUSY instead
+// of queueing, which used to drop everything past the third frame silently.
+TEST_CASE("CAN TX: frames the driver refuses are deferred and retried", "[can]") {
+    const ElsterIndex* ei = GetElsterIndex("RAUMSOLLTEMP_I");
+    REQUIRE(ei != nullptr);
+
+    fake_can().sent.clear();
+    fake_can().tx_slots = 3;   // MCP2515: three TX buffers, then busy
+    fake_can().drain();
+    pendingCanFrames.clear();
+
+    // Three write+read pairs — the tail of an SG Ready burst (6 frames)
+    for (int i = 0; i < 3; i++) {
+        writeCanSignalRouted("RAUMSOLLTEMP_I", "25.0");
+    }
+    CHECK(fake_can().sent.size() == 3);      // only what the buffers could take
+    CHECK(pendingCanFrames.size() == 3);     // the rest are parked, not lost
+
+    // The bus drains; the next 1 s request-manager tick retries the parked frames
+    fake_can().drain();
+    retryPendingCanFrames();
+    CHECK(fake_can().sent.size() == 6);      // all six made it out
+    CHECK(pendingCanFrames.empty());
+
+    fake_can().tx_slots = 0;                 // restore the TWAI-like default
+}
+
+// The fix must not change anything on the TWAI build: with a deep queue no frame
+// is ever refused, so nothing is deferred.
+TEST_CASE("CAN TX: a deep TX queue never defers", "[can]") {
+    fake_can().sent.clear();
+    fake_can().tx_slots = 0;   // unlimited, like tx_queue_len: 64
+    fake_can().drain();
+    pendingCanFrames.clear();
+
+    for (int i = 0; i < 10; i++) {
+        writeCanSignalRouted("RAUMSOLLTEMP_I", "25.0");
+    }
+    CHECK(fake_can().sent.size() == 20);     // 10 write+read pairs, none refused
+    CHECK(pendingCanFrames.empty());
 }

@@ -45,6 +45,7 @@ than raw commands:
 | `make config` | Dump merged YAML (useful for debugging) |
 | `make smoke-test` | MQTT regression test: 120s observation window |
 | `make capture-baseline` | Capture new MQTT baseline for current model (300s) |
+| `make esphome-latest` | Check PyPI for a newer ESPHome release (installed vs latest) |
 
 ---
 

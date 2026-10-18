@@ -5,6 +5,136 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions: [Sem
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- **`WW_SOLL` — combined DHW setpoint.** Replaces the two raw `EINSTELL_SPEICHERSOLLTEMP` /
+  `EINSTELL_SPEICHERSOLLTEMP2` number entities and their `/set` topics. On the WPL 10 AC (WPM3)
+  both Einstell registers are written together, because the active setpoint may follow either one.
+- **`RAUM_SOLL` — room setpoint** on the main device. Same register as the `RAUMSOLLTEMP_I`
+  entity, which stays on the sub-device; both are kept in sync, so either can be used.
+- **Room boost offsets** `SG_READY_ROOM_BOOST_STATE3/4` (main device), the room-side counterpart
+  of the DHW boost temperatures.
+- **`heatingpump/DATETIME/set`** — strictly validated (`YYYY-MM-DD HH:MM:SS`) WPM clock set,
+  replacing the `Update Datum` / `Update Uhrzeit` buttons.
+- **ECO DHW setpoint is writable again** on every model except the WPL 10 AC, where it is kept in
+  sync with `WW_SOLL` instead. A normal setpoint change never overwrites the ECO value.
+- Operational diagnostics: uptime, reset reason and free-heap sensors; throttled logging for
+  failed MQTT publishes; TWAI recovery return values checked instead of ignored. Reaching the
+  entity cap (`MAX_PUBLISHED_SIGNALS`) now logs an **error** once per boot naming the dropped
+  signal, and the periodic container-size log line reports the published-signal count against
+  the cap, so silently missing entities are no longer possible.
+
+### Changed
+
+- **Renamed SG Ready boost entity names** — the friendly name changes, so Home Assistant entity
+  IDs change and dashboards/automations referring to them must be updated:
+  - `SG_READY_BOOST_STATE3`: "SG Ready Boost Zustand 3" → **"WW Boost Empfohlen"**
+    (EN: "SG Ready Boost State 3" → **"DHW Boost Recommended"**)
+  - `SG_READY_BOOST_STATE4`: "SG Ready Boost Zustand 4" → **"WW Boost Zwang"**
+    (EN: "SG Ready Boost State 4" → **"DHW Boost Forced"**)
+- CAN polling reworked: prebuilt poll slots replace the per-iteration string-keyed lookups and the
+  per-frame heap allocations are gone. Invalid sentinel values (`-255`, `?`, `--`, `-32768`) are
+  now skipped instead of creating permanently-unavailable entities — and when such a value arrives
+  for an entity that already exists, it is published as `None` (unknown in Home Assistant) instead
+  of silently keeping the last good value, which made a dead signal look like a live reading.
+- Build/test: ESPHome 2026.9.1 in CI; the native test build tracks header dependencies.
+- **The device now reboots after 10 minutes without an MQTT broker connection**
+  (`mqtt: reboot_timeout: 600s`; previously `0s`, meaning never). Ordinary disconnects are still
+  handled by the MQTT client's own reconnect — this is the recovery path for a client that is
+  wedged (for example after heap starvation), which previously stayed dead until some unrelated
+  reboot rescued it. Consequence to be aware of: while a broker outage genuinely lasts longer than
+  10 minutes, expect one reboot per 10 minutes (each pausing CAN polling for ~30 s).
+- **The time zone is configurable** via the `timezone` substitution (default `Europe/Berlin`)
+  instead of being hard-coded. It is only the fallback for the clock written to the heat pump —
+  Home Assistant 2026.3.0 and newer pushes its own zone on every time sync and the device adopts
+  it. Users outside CET should set it; previously their heat pump clock was set to Berlin time.
+
+- **The SG Ready watchdog window is configurable** — `sg_ready_watchdog_min` (minutes), default
+  **720 = 12 h**, previously hard-coded to 3 h. An active boost that receives no command for that
+  window falls back to Normal; standby is never auto-terminated. A small value such as `3` makes the
+  watchdog observable on hardware within minutes (needs a recompile + re-flash). The longer default
+  means a legitimate long boost from the control source is no longer cut off after 3 h — at the cost
+  of a genuinely stuck boost persisting up to 12 h.
+
+### Removed
+
+- The `EINSTELL_SPEICHERSOLLTEMP` number entity and `/set` topic — use `WW_SOLL` instead.
+- The `EINSTELL_SPEICHERSOLLTEMP2` number entity and `/set` topic **on the WPL 10 AC only**
+  (merged into `WW_SOLL`); restored on all other models as the ECO setpoint.
+- The `Update Datum` / `Update Uhrzeit` buttons and the `input_datetime.heatingpump_date` /
+  `input_datetime.heatingpump_time` helpers — use `heatingpump/DATETIME/set` or the
+  "WPM Datum & Uhrzeit übernehmen" button. The optional `packages/ha_stiebel_control.yaml`
+  helper package is therefore obsolete; see [docs/INSTALLATION.md](docs/INSTALLATION.md).
+
+### Fixed
+
+- **CAN frames were silently dropped on the ESP32-S2 / MCP2515 build.** That driver refuses
+  frames when its three TX buffers are busy (`ERROR_ALLTXBUSY`) instead of queueing them, and the
+  return value was ignored — an SG Ready state change issues up to 8 frames from a single lambda,
+  so everything past the third was lost with no log, no error, and Home Assistant still showing
+  the new setpoints. `readSignal()`/`writeSignal()` now check the driver result and park refused
+  frames for retry on the next 1 s tick. The ESP32-S3 build is unaffected: its TX queue is 64 deep
+  and never refuses a frame.
+- **A boost that survived a reboot was never rescued by the SG Ready watchdog.** The SG Ready
+  state itself was never persisted (only the boost originals), so after a restart the state read
+  back as *Normal* — the watchdog's "never commanded" guard also left it disarmed, and Home
+  Assistant showed the wrong SG Ready state. The state is now stored alongside the boost
+  originals, the watchdog is armed when a boost or standby is restored, and the time check moved
+  into `SgReadyController::watchdogShouldRecover()` where it is unit-tested. Only a stuck boost
+  (state 3/4) is recovered; standby is never auto-terminated. A survived boost is recovered one
+  watchdog window after boot, since its real age is unknowable (the command timestamp is not
+  persisted).
+- **Scheduled tasks stalled for ~49 days after a `millis()` wrap.** `now >= deadline` on 32-bit
+  millis values — the CAN poll schedule and the five calculated-sensor deadlines — reported a
+  deadline set just before the wrap as far in the future. All six now use the wrap-safe
+  `deadlineReached()` helper.
+- **The CAN poll schedule always restarted at slot 0.** With one request per second, the
+  lowest-indexed due signal won every iteration and the tail of the table was starved. The
+  round-robin start index is restored, with a regression test.
+- **An out-of-range date could be written to the heat pump clock.** `isValidDateString()` checked
+  length, separators and digits only, so `2026-13-99` was accepted and sent to the WPM. Dates are
+  now range-checked, including days per month and leap years (`2026-02-30`, `2025-02-29`).
+
+### Migration
+
+Friendly names, not entity IDs, are the stable reference here — Home Assistant derives the entity
+ID from the name, so every rename above means a new entity ID.
+
+| Old (name / topic) | New |
+|---|---|
+| "Speicher Soll Temperatur Einstellung" (`heatingpump/MANAGER/EINSTELL_SPEICHERSOLLTEMP/set`) | "WW Soll" (`heatingpump/MANAGER/WW_SOLL/set`) |
+| "Speicher Soll Temperatur 2 Einstellung" (`…EINSTELL_SPEICHERSOLLTEMP2/set`) | WPL 10 AC: merged into "WW Soll". All other models: unchanged, writable again as the ECO setpoint |
+| "Update Uhrzeit" / "Update Datum" buttons + `input_datetime` helpers | `heatingpump/DATETIME/set`, or the "WPM Datum & Uhrzeit übernehmen" button |
+| "SG Ready Boost Zustand 3" | "WW Boost Empfohlen" |
+| "SG Ready Boost Zustand 4" | "WW Boost Zwang" |
+| — (new) | "Raum Soll", "Raum Boost Empfohlen", "Raum Boost Zwang" |
+
+#### Removing entities from newly blacklisted registers
+
+Registers that were published *before* they were blacklisted (e.g. `TEST_OBJEKT_*`, `ESTRICH_*`,
+`FESTWERT`) keep their retained MQTT discovery config and go on showing their last value in Home
+Assistant — the firmware simply stops publishing them, and a retained discovery config can only be
+cleared from the broker side. Clear them once with ESPHome's built-in helper:
+
+```sh
+esphome clean-mqtt esphome/heatingpump.yaml --topic 'homeassistant/+/heatingpump/stiebel_kessel_estrich*/config'
+esphome clean-mqtt esphome/heatingpump.yaml --topic 'homeassistant/+/heatingpump/stiebel_kessel_festwert/config'
+esphome clean-mqtt esphome/heatingpump.yaml --topic 'homeassistant/+/heatingpump/stiebel_*_test_objekt_*/config'
+
+esphome clean-mqtt esphome/heatingpump.yaml --topic 'heatingpump/KESSEL/ESTRICH_*/state'
+esphome clean-mqtt esphome/heatingpump.yaml --topic 'heatingpump/KESSEL/FESTWERT/state'
+esphome clean-mqtt esphome/heatingpump.yaml --topic 'heatingpump/*/TEST_OBJEKT_*/state'
+```
+
+Each command runs until you close it (Ctrl-C) — that is normal. **Always pass `--topic`**: without it
+the helper targets `homeassistant/+/<name>/#`, i.e. every discovery config of the device.
+Blacklisted registers are never re-published, so they stay gone; everything else reappears with the
+next discovery republish (≤ 15 min).
+
+---
+
 ## [2.1.1] — 2026-07-25
 
 ### Fixed

@@ -52,6 +52,8 @@ substitutions:
   friendly_name: "Stiebel Eltron Wärmepumpe"
   device_model: "wpl13e"          # your heat pump model — see Supported Models in README
   language: "DE"                  # display language for HA entity names: DE (default) or EN
+  timezone: "Europe/Berlin"       # fallback tz for the WPM clock — set your local zone
+  sg_ready_watchdog_min: 720      # SG-Ready watchdog in minutes (720 = 12 h; e.g. 3 for testing)
   can_tx_pin: YOUR_CAN_TX          # board-specific — see pin note below
   can_rx_pin: YOUR_CAN_RX          # board-specific — see pin note below
   can_id_pc: "0x680"
@@ -64,6 +66,13 @@ packages:
 ```
 
 > **Language:** German is the default. Change `language: "DE"` to `language: "EN"` if you prefer English entity names in Home Assistant. The language is baked into the firmware at compile time — recompile and re-flash after changing it.
+
+> **SG-Ready watchdog:** `sg_ready_watchdog_min` is the window in minutes after which an active
+> boost (SG Ready state 3/4) with **no command** falls back to Normal — 720 = 12 h by default.
+> Set it to a small value such as `3` to observe the watchdog working on hardware within minutes
+> (recompile + re-flash). Standby (state 1) is never auto-terminated.
+
+> **Time zone:** `timezone` sets the clock written to the heat pump. It is only a fallback — Home Assistant 2026.3.0 and newer pushes its own zone on every time sync, which then takes over. Set it to your local zone so the clock is right before that first sync (and with older Home Assistant versions).
 
 > **Pin numbers are board-specific — always verify against your board's schematic.**
 > The `heatingpump.yaml` shipped in this repo already has correct values for the
@@ -138,6 +147,11 @@ Create a `secrets.yaml` in the same folder (see section 2 above for required key
 
 To upgrade to a new release, change `@v2.0.0` to the new tag and recompile.
 
+> **Upgrading from a version before this one?** Some entity names changed and a number of junk
+> registers are no longer published. Work through the migration table in
+> [CHANGELOG.md](../CHANGELOG.md#migration) — it also has the `esphome clean-mqtt` commands that remove
+> the entities left behind by newly blacklisted registers.
+
 ---
 
 ## Home Assistant Integration
@@ -151,12 +165,17 @@ Ensure the MQTT integration is configured in HA:
 
 Entities from the heat pump will appear automatically — no manual configuration needed.
 
-### HA Helper Package (optional)
+### HA Helper Package (no longer required)
 
-The `packages/ha_stiebel_control.yaml` file adds `input_datetime` helpers used to set the
-heat pump's date and time from HA.
+> **Obsolete as of this version.** The clock is now set with `heatingpump/DATETIME/set` or the
+> "WPM Datum & Uhrzeit übernehmen" button, which reads Home Assistant's own time source, so the
+> `input_datetime` helpers — and the `Update Datum` / `Update Uhrzeit` buttons that used them — are
+> gone. `packages/ha_stiebel_control.yaml` is kept only for reference and can be deleted.
 
-Copy it to your HA config:
+The old workflow, for reference: `packages/ha_stiebel_control.yaml` added `input_datetime` helpers
+that the removed buttons read to push date and time to the heat pump.
+
+Copy it to your HA config only if you still need it:
 ```bash
 cp packages/ha_stiebel_control.yaml /config/packages/
 ```

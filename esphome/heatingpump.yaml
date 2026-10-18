@@ -15,6 +15,8 @@ substitutions:
   friendly_name: "Stiebel Eltron Wärmepumpe"
   device_model: "wpl10ac"        # used in HA device identifier (stiebel_eltron_<model>)
   language: "DE"                  # display language for HA entity names: DE (default) or EN
+  timezone: "Europe/Berlin"       # fallback only — HA 2026.3.0+ pushes its real timezone
+  sg_ready_watchdog_min: 720      # SG-Ready watchdog window in minutes (720 = 12 h; e.g. 3 for testing)
   # CAN pins for ESP32-S3 built-in TWAI controller
   can_tx_pin: GPIO15  # TXD2 on Waveshare board
   can_rx_pin: GPIO16  # RXD2 on Waveshare board

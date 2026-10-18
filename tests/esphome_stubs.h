@@ -35,9 +35,23 @@ inline uint32_t esp_random() { return 42; }
 // ── CAN bus stub ─────────────────────────────────────────────────────────────
 struct FakeCanBus {
     std::vector<std::vector<uint8_t>> sent;
-    void send_data(uint32_t /*id*/, bool /*ext*/, const std::vector<uint8_t>& data) {
+
+    // Simulates a driver with a fixed number of TX buffers: after tx_slots frames
+    // are pending it refuses further sends, exactly like the MCP2515 driver
+    // returning ERROR_ALLTXBUSY. 0 = unlimited (the TWAI build's 64-deep queue).
+    size_t tx_slots = 0;
+    size_t busy      = 0;
+
+    // Returns 0 on success, 2 on "all TX busy" (canbus::ERROR_ALLTXBUSY)
+    uint8_t send_data(uint32_t /*id*/, bool /*ext*/, const std::vector<uint8_t>& data) {
+        if (tx_slots != 0 && busy >= tx_slots) return 2;
         sent.push_back(data);
+        if (tx_slots != 0) busy++;
+        return 0;
     }
+
+    // Simulate the bus transmitting everything that was accepted
+    void drain() { busy = 0; }
 };
 inline FakeCanBus& fake_can() { static FakeCanBus b; return b; }
 // id(my_can) → fake_can()

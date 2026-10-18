@@ -88,8 +88,9 @@ Boost-Stärke: `heatingpump/MANAGER/SG_READY_BOOST_STATE3/set` (z.B. `5.0`) und 
    Automation (5-min-Scan): wenn `select.heatingpump_sg_ready_state` in `3/4` seit **≥ 1 h**
    UND PV **< 200 W** → zurück auf `2 - Normal` (+ optional Notification). Zusätzlich
    MQTT-LWT `heatingpump/status` == `offline` → Benachrichtigung, optional Shelly auf Freigabe.
-2. **Firmware-Watchdog** (`checkSgReadyWatchdog`, **3 h**, **nur bei Boost 3/4**):
-   greift nur, wenn ein Boost länger als 3 h ohne Befehl aktiv ist → zurück auf
+2. **Firmware-Watchdog** (`checkSgReadyWatchdog`, **12 h** per `sg_ready_watchdog_min`
+   konfigurierbar, **nur bei Boost 3/4**):
+   greift nur, wenn ein Boost länger als das konfigurierte Fenster ohne Befehl aktiv ist → zurück auf
    `2 - Normal`. **Standby (1) wird nie automatisch beendet** (gewollter Langzeitzustand).
    Letztes Netz bei gleichzeitigem Ausfall von evcc+HA (Wrap in < 1 Tag begrenzt).
 3. **WPM-Zeitprogramm** deckt ESP-Spannungsverlust ab („Normal" idealerweise als

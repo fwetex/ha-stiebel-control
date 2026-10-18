@@ -5,6 +5,8 @@ substitutions:
   friendly_name: "Stiebel Eltron Wärmepumpe"
   device_model: "wpl13e"
   language: "DE"
+  timezone: "Europe/Berlin"  # fallback only — HA 2026.3.0+ pushes its real timezone
+  sg_ready_watchdog_min: 720
   can_tx_pin: GPIO15
   can_rx_pin: GPIO16
   can_id_pc: "0x680"

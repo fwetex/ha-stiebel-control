@@ -62,14 +62,23 @@ These entities appear automatically in HA via MQTT discovery:
 
 | Entity ID | Description | Range | Step |
 |-----------|-------------|-------|------|
-| `number.manager_speicher_soll_temperatur_einstellung` | DHW target temperature | 20–60°C | 1°C |
-| `number.manager_speicher_soll_temperatur_2_einstellung` | DHW eco target temperature | 20–60°C | 1°C |
+| `number.manager_ww_soll` | DHW target temperature (`WW_SOLL`) | 20–60°C | 1°C |
+| `number.manager_speicher_soll_temperatur_2_einstellung` | DHW ECO target temperature — **not on the WPL 10 AC**, where `WW_SOLL` keeps that register in sync | 20–60°C | 1°C |
+| `number.manager_raum_soll` | Room setpoint (`RAUM_SOLL`) — main-device alias of circuit 1 below | 10–30°C | 0.5°C |
 | `number.manager_raum_soll_temperatur_i_einstellung` | Room setpoint circuit 1 | 10–30°C | 0.5°C |
 | `number.manager_raum_soll_temperatur_ii_einstellung` | Room setpoint circuit 2 | 10–30°C | 0.5°C |
 | `number.manager_raum_soll_temperatur_iii_einstellung` | Room setpoint circuit 3 | 10–30°C | 0.5°C |
 | `number.manager_raum_soll_temperatur_nacht_einstellung` | Room setpoint night/reduced | 10–30°C | 0.5°C |
-| `number.manager_sg_ready_boost_zustand_3` | SG Ready DHW boost for state 3 | 0–10°C | 0.5°C |
-| `number.manager_sg_ready_boost_zustand_4` | SG Ready DHW boost for state 4 | 0–15°C | 0.5°C |
+| `number.manager_ww_boost_empfohlen` | SG Ready DHW boost for state 3 | 0–10°C | 0.5°C |
+| `number.manager_ww_boost_zwang` | SG Ready DHW boost for state 4 | 0–15°C | 0.5°C |
+| `number.manager_raum_boost_empfohlen` | SG Ready room boost for state 3 | 0–5°C | 0.5°C |
+| `number.manager_raum_boost_zwang` | SG Ready room boost for state 4 | 0–5°C | 0.5°C |
+
+> **Changed in this version:** the two DHW setpoint entities were combined into `WW_SOLL`, the SG
+> Ready boost entities were renamed ("SG Ready Boost Zustand 3/4" → "WW Boost Empfohlen/Zwang"),
+> and the `Update Datum` / `Update Uhrzeit` buttons were replaced by `heatingpump/DATETIME/set`.
+> Home Assistant derives entity IDs from the friendly name, so dashboards and automations that use
+> the old entities need updating — see the migration table in [CHANGELOG.md](../CHANGELOG.md).
 
 ### Compressor Runtime Counters (WPL13E, sensor entities)
 
@@ -133,7 +142,7 @@ heatingpump/{CAN_MEMBER}/{SIGNAL_NAME}/set       ← write (writable signals onl
 Examples:
 ```
 heatingpump/MANAGER/PROGRAMMSCHALTER/state       → "Tagbetrieb"
-heatingpump/MANAGER/EINSTELL_SPEICHERSOLLTEMP/set ← "55"
+heatingpump/MANAGER/WW_SOLL/set                  ← "55"
 heatingpump/KESSEL/SPEICHERISTTEMP/state         → "51.8"
 ```
 

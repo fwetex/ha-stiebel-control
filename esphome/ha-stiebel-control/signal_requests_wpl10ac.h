@@ -73,17 +73,14 @@ extern const SignalRequest signalRequests[] = {
     {"WAERMEERTRAG_WW_TAG_KWH",          FREQ_10MIN, cm_heizmodul},
 
     // ========================================================================
-    // MAINTENANCE / MONITORING — pressure, flow, runtimes
-    // (member/frequency best-guess; prune what the WPM3 does not answer)
+    // MONITORING — refrigerant pressures
+    // These are the only maintenance values this model actually reports.
+    // Pruned on 2026-10-18 after logging every poll for 12 minutes:
+    // WASSERDRUCK, DURCHFLUSS_CH/WW and all five LAUFZEIT_* counters answer
+    // 0x8000 ("not available" → -255) on *every* read, so polling them only
+    // consumed request-schedule slots. Re-add a line if a future WPM3 firmware
+    // starts reporting one.
     // ========================================================================
-    {"WASSERDRUCK",                      FREQ_1MIN,  cm_kessel},    // heating circuit water pressure
-    {"DURCHFLUSS_CH",                    FREQ_1MIN,  cm_kessel},    // heating flow
-    {"DURCHFLUSS_WW",                    FREQ_1MIN,  cm_kessel},    // DHW flow
-    {"LAUFZEIT_VERDICHTER_HEIZEN",       FREQ_10MIN, cm_heizmodul}, // compressor hours heating
-    {"LAUFZEIT_VERDICHTER_KUEHLEN",      FREQ_10MIN, cm_heizmodul}, // compressor hours cooling
-    {"LAUFZEIT_VERDICHTER_WW",           FREQ_10MIN, cm_heizmodul}, // compressor hours DHW
-    {"LAUFZEIT_NHZ_HEIZEN",              FREQ_10MIN, cm_heizmodul}, // backup heater hours heating
-    {"LAUFZEIT_NHZ_WW",                  FREQ_10MIN, cm_heizmodul}, // backup heater hours DHW
     {"ANZEIGE_HOCHDRUCK",                FREQ_1MIN,  cm_heizmodul}, // refrigerant high pressure
     {"ANZEIGE_NIEDERDRUCK",              FREQ_1MIN,  cm_heizmodul}, // refrigerant low pressure
 };

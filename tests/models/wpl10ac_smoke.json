@@ -1,13 +1,11 @@
 {
-  "description": "Required topics for WPL 10 AC (air-source, WPM3). Verified on hardware 2026-10-04. Requires the WPM3 display / CAN B connection at 50 kbps; DHW/boiler and room values are only exposed there. Boiler reads use the normal ComfortSoft sender (0x680). Room actual temp + humidity (0x4ec7/0x4ec8) are broadcast passively by the room sensor node (0x401).",
+  "description": "Required topics for WPL 10 AC (air-source, WPM3). Verified on hardware 2026-10-04. Requires the WPM3 display / CAN B connection at 50 kbps; DHW/boiler and room values are only exposed there. Boiler reads use the normal ComfortSoft sender (0x680). Room actual temp + humidity (0x4ec7/0x4ec8) are broadcast passively by the room sensor node (0x401) — kept as required because that node transmits them continuously. KESSEL/RAUMSOLLTEMP_I and KESSEL/RAUMSOLLTEMP_NACHT are deliberately NOT required: nothing polls them from the Kessel (they are requested from MANAGER — see signal_requests_wpl10ac.h), so they depend on a rare Kessel echo, and the value is already covered by the MANAGER topics. Verified absent (no retained topic) on 2026-10-18.",
   "required_topics": [
     "heatingpump/KESSEL/SPEICHERISTTEMP/state",
     "heatingpump/KESSEL/SPEICHERSOLLTEMP/state",
     "heatingpump/KESSEL/AUSSENTEMP/state",
     "heatingpump/KESSEL/KESSELSOLLTEMP/state",
     "heatingpump/KESSEL/HILFSKESSELSOLL/state",
-    "heatingpump/KESSEL/RAUMSOLLTEMP_I/state",
-    "heatingpump/KESSEL/RAUMSOLLTEMP_NACHT/state",
     "heatingpump/MANAGER/RAUMSOLLTEMP_I/state",
     "heatingpump/MANAGER/RAUMSOLLTEMP_NACHT/state",
     "heatingpump/RAUMFERNFUEHLER_2/RAUMISTTEMP/state",

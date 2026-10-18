@@ -16,6 +16,7 @@ Run these `make` targets from the repo root:
 | `make config` | Dump merged YAML (useful for debugging package includes) |
 | `make smoke-test` | MQTT regression test: verify all required signals appear within 120s |
 | `make capture-baseline` | Capture new MQTT baseline for current model (300s, overwrites model file) |
+| `make esphome-latest` | Check PyPI for a newer ESPHome release (installed vs latest) |
 
 **Before uploading**: always run `make check` first. Verify flash usage stays <50% in the compile output.
 

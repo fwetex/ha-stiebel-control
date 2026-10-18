@@ -33,7 +33,7 @@ ha-stiebel-control/
 │           ├── KElsterTable.cpp/h          # Table lookup, value conversion
 │           └── NUtils.cpp/h, NTypes.h      # Utility functions and types
 ├── packages/
-│   ├── ha_stiebel_control.yaml             # HA helpers (input_datetime for clock sync)
+│   ├── ha_stiebel_control.yaml             # OBSOLETE: input_datetime helpers for the removed button-based clock sync
 │   └── sg_ready_automation_example.yaml    # Example automation: E3DC → SG Ready
 ├── tests/
 │   ├── test_sg_ready.cpp                   # Catch2 tests for SgReadyController

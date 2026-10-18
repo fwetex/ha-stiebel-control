@@ -23,6 +23,7 @@ struct FakeIO : ISgReadyIO {
     float  savedDhw    = 0.0f;
     float  savedRoom   = 0.0f;
     bool   savedActive = false;
+    int    savedState  = 0;
     bool   hasData     = false;
 
     void writeCanSignal(const char* signal, const char* value) override {
@@ -33,19 +34,21 @@ struct FakeIO : ISgReadyIO {
         calls.push_back({"mqtt", topic, value});
     }
 
-    void saveBoostState(float dhw, float room, bool active) override {
+    void saveBoostState(float dhw, float room, bool active, int state) override {
         savedDhw    = dhw;
         savedRoom   = room;
         savedActive = active;
+        savedState  = state;
         hasData     = true;
         calls.push_back({"save", "", active ? "1" : "0"});
     }
 
-    bool loadBoostState(float& dhw, float& room, bool& active) override {
+    bool loadBoostState(float& dhw, float& room, bool& active, int& state) override {
         if (!hasData) return false;
         dhw    = savedDhw;
         room   = savedRoom;
         active = savedActive;
+        state  = savedState;
         return true;
     }
 
@@ -191,6 +194,25 @@ TEST_CASE("DHW boost is capped at 60°C", "[sg_ready]") {
     ctrl.applyState(SgReadyController::STATE_FORCED);
 
     CHECK(io.lastCan("EINSTELL_SPEICHERSOLLTEMP") == "60.0");
+}
+
+// The two Einstell registers are only written as a pair on the WPL10AC/WPM3
+// (SG_READY_SYNC_DHW_SETTINGS). On every other model EINSTELL_SPEICHERSOLLTEMP2
+// is the ECO setting and must never be touched by a boost or a restore.
+// NOTE: the native test build defines no HA_MODEL_*, so this exercises the
+// non-WPL10AC branch; the sync branch is covered by the wpl10ac compile.
+TEST_CASE("DHW boost/restore never writes the ECO register on non-WPL10AC models", "[sg_ready]") {
+    FakeIO io;
+    SgReadyController ctrl(io);
+    ctrl.setBoostState3(5.0f);
+
+    ctrl.applyState(SgReadyController::STATE_RECOMMENDED);  // boost
+    CHECK(io.countCan("EINSTELL_SPEICHERSOLLTEMP")  == 1);
+    CHECK(io.countCan("EINSTELL_SPEICHERSOLLTEMP2") == 0);  // ECO untouched
+
+    ctrl.applyState(SgReadyController::STATE_NORMAL);       // restore
+    CHECK(io.countCan("EINSTELL_SPEICHERSOLLTEMP")  == 2);
+    CHECK(io.countCan("EINSTELL_SPEICHERSOLLTEMP2") == 0);  // ECO untouched
 }
 
 TEST_CASE("room boost is capped at 25°C", "[sg_ready]") {
@@ -433,4 +455,95 @@ TEST_CASE("boost state is cleared after state 2", "[sg_ready]") {
     ctrl.applyState(SgReadyController::STATE_NORMAL);
 
     CHECK(io.savedActive == false);
+}
+
+// ============================================================================
+// SG Ready watchdog — pure predicate (watchdogShouldRecover)
+// ============================================================================
+
+TEST_CASE("watchdogShouldRecover: rescues a stuck boost, never a standby", "[sg_ready]") {
+    FakeIO io;
+    SgReadyController ctrl(io);
+    const uint32_t W = SgReadyController::SG_READY_WATCHDOG_MS;
+
+    // Normal needs no recovery, however old the last command is
+    CHECK_FALSE(ctrl.watchdogShouldRecover(10 * W, 0));
+
+    // Boost (3): due only once the window has elapsed
+    ctrl.applyState(SgReadyController::STATE_RECOMMENDED);
+    REQUIRE(ctrl.currentState() == SgReadyController::STATE_RECOMMENDED);
+    CHECK_FALSE(ctrl.watchdogShouldRecover(0, 0));       // just commanded
+    CHECK_FALSE(ctrl.watchdogShouldRecover(W - 1, 0));   // one ms early
+    CHECK(ctrl.watchdogShouldRecover(W, 0));             // exactly due
+    CHECK(ctrl.watchdogShouldRecover(10 * W, 0));        // long overdue
+
+    // Standby (1) is deliberate and never auto-terminated
+    ctrl.applyState(SgReadyController::STATE_EVU_LOCK);
+    REQUIRE(ctrl.currentState() == SgReadyController::STATE_EVU_LOCK);
+    CHECK_FALSE(ctrl.watchdogShouldRecover(50 * W, 0));
+}
+
+// The window test is millis()-wrap safe: `now >= lastCommandTs` would report the
+// command as "in the future" and never recover.
+TEST_CASE("watchdogShouldRecover: works across the millis() wrap", "[sg_ready]") {
+    FakeIO io;
+    SgReadyController ctrl(io);
+    ctrl.applyState(SgReadyController::STATE_RECOMMENDED);
+
+    // Derived from the configured window, so changing `sg_ready_watchdog_min`
+    // cannot silently break this test: last command just before the wrap, "now"
+    // one millisecond past the window (so the unsigned subtraction wraps at zero).
+    const uint32_t W          = SgReadyController::SG_READY_WATCHDOG_MS;
+    const uint32_t beforeWrap = 0xFFFFFFFFu - 100u;
+    const uint32_t afterWrap  = beforeWrap + W + 1u;   // wraps past 0xFFFFFFFF
+
+    CHECK(afterWrap < beforeWrap);                     // naive `now >= last` says "not due"
+    CHECK(ctrl.watchdogShouldRecover(afterWrap, beforeWrap));
+    CHECK_FALSE(ctrl.watchdogShouldRecover(beforeWrap + W - 1u, beforeWrap));  // 1 ms early
+}
+
+// ============================================================================
+// SG Ready state persistence across a reboot
+// ============================================================================
+
+TEST_CASE("loadFromNvs restores the state, not just the boost originals", "[sg_ready]") {
+    // A boost was active when the device rebooted
+    FakeIO io;
+    SgReadyController ctrl(io);
+    ctrl.setBoostState3(5.0f);
+    ctrl.applyState(SgReadyController::STATE_RECOMMENDED);
+    REQUIRE(io.savedState == SgReadyController::STATE_RECOMMENDED);
+
+    // Reboot: fresh controller, same NVS contents
+    SgReadyController rebooted(io);
+    CHECK(rebooted.currentState() == SgReadyController::STATE_NORMAL);  // before load
+    rebooted.loadFromNvs();
+    CHECK(rebooted.currentState() == SgReadyController::STATE_RECOMMENDED);
+    CHECK(rebooted.isActive());
+    // …and the watchdog can now rescue it (it could not when the state was lost)
+    CHECK(rebooted.watchdogShouldRecover(SgReadyController::SG_READY_WATCHDOG_MS, 0));
+}
+
+TEST_CASE("loadFromNvs: a standby that survived a reboot stays a standby", "[sg_ready]") {
+    FakeIO io;
+    SgReadyController ctrl(io);
+    ctrl.applyState(SgReadyController::STATE_EVU_LOCK);
+
+    SgReadyController rebooted(io);
+    rebooted.loadFromNvs();
+    CHECK(rebooted.currentState() == SgReadyController::STATE_EVU_LOCK);
+    // restored standby must never be auto-terminated
+    CHECK_FALSE(rebooted.watchdogShouldRecover(
+        10 * SgReadyController::SG_READY_WATCHDOG_MS, 0));
+}
+
+TEST_CASE("loadFromNvs: an out-of-range persisted state is ignored", "[sg_ready]") {
+    FakeIO io;
+    io.hasData    = true;
+    io.savedActive = true;
+    io.savedState  = 99;   // garbage from an older firmware / torn write
+
+    SgReadyController ctrl(io);
+    ctrl.loadFromNvs();
+    CHECK(ctrl.currentState() == SgReadyController::STATE_NORMAL);
 }

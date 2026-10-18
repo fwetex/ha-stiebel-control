@@ -52,6 +52,7 @@ esphome:
       - "-DHA_DEVICE_MODEL=${device_model}"
       - "-DHA_MODEL_${device_model}"
       - "-DHA_LANGUAGE_${language}"
+      - "-DHA_SG_READY_WATCHDOG_MIN=${sg_ready_watchdog_min}"
 
 
 #########################################
@@ -108,7 +109,12 @@ mqtt:
     retain: true
   # Keepalive for connection monitoring
   keepalive: 15s
-  # Disable reboot on MQTT disconnect - will keep trying to reconnect indefinitely
+  # Reboot after 10 min with no broker connection. Ordinary disconnects recover through
+  # esp-mqtt's own reconnect, so this only fires when reconnecting itself is stuck — e.g.
+  # the MQTT task can no longer allocate (see the heap notes) — which is the one failure
+  # mode a restart actually fixes. Trade-off: a broker that is genuinely down for longer
+  # than this causes one reboot per 10 min (~30 s of paused CAN polling each, see
+  # STARTUP_DELAY_MS). ESPHome logs "Can't connect; restarting" before doing this.
   reboot_timeout: 600s
   on_connect:
     - logger.log:
@@ -122,7 +128,8 @@ mqtt:
         publishWritableSelectDiscoveryByName("SG_READY_STATE");
         publishAllWritableNumberDiscoveries();
         publishWritableSelectDiscoveryByName("PROGRAMMSCHALTER");
-        // Datetime control now handled by Home Assistant input_datetime helpers
+        // Datetime is set via heatingpump/DATETIME/set (strictly validated) or the
+        // "WPM Datum & Uhrzeit übernehmen" button, which reads the HA time source.
         ESP_LOGI("MQTT_CONN", "Discovery publication complete");
 
         // Publish initial states for SG Ready controls (retained)
@@ -156,16 +163,17 @@ mqtt:
             publishAllCalculatedSensorDiscoveries(true);
             ESP_LOGI("MQTT_CMD", "All discoveries republished");
 
-    # Normal DHW (WW) setpoint — writes BOTH Einstell registers so they stay in
-    # sync (the WPM3 active setpoint follows one of them internally)
+    # Normal DHW (WW) setpoint — writes the Einstell register(s) this model needs.
+    # WPL10AC/WPM3 only: both registers are kept in sync, because the active
+    # setpoint may follow either one internally. On every other model ..._2 is the
+    # ECO setting and is not touched — see SG_READY_SYNC_DHW_SETTINGS.
     - topic: heatingpump/MANAGER/WW_SOLL/set
       then:
         - lambda: |-
             ESP_LOGI("MQTT_CMD", "Received WW_SOLL command: %s", x.c_str());
             publishWritableNumberDiscoveryByName("WW_SOLL");
             const char* value = x.c_str();
-            writeCanSignalRouted("EINSTELL_SPEICHERSOLLTEMP", value);
-            writeCanSignalRouted("EINSTELL_SPEICHERSOLLTEMP2", value);
+            writeDhwSetpointRouted(value);
             publishMqttChecked("heatingpump/MANAGER/WW_SOLL/state", value, strlen(value), 0, true);
 
     # Normal room setpoint — writes RAUMSOLLTEMP_I (manager)
@@ -177,6 +185,17 @@ mqtt:
             const char* value = x.c_str();
             writeSignal(&CanMembers[cm_manager], "RAUMSOLLTEMP_I", value);
             readSignal(&CanMembers[cm_manager], "RAUMSOLLTEMP_I");
+
+    # ECO / reduced DHW setpoint (EINSTELL_SPEICHERSOLLTEMP2).
+    # Only exists on non-WPL10AC models: the WPM3 keeps this register in sync with
+    # the normal setpoint through WW_SOLL (see SG_READY_SYNC_DHW_SETTINGS), so the
+    # write helper ignores it there and logs instead.
+    - topic: heatingpump/MANAGER/EINSTELL_SPEICHERSOLLTEMP2/set
+      then:
+        - lambda: |-
+            ESP_LOGI("MQTT_CMD", "Received EINSTELL_SPEICHERSOLLTEMP2 command: %s", x.c_str());
+            publishWritableNumberDiscoveryByName("EINSTELL_SPEICHERSOLLTEMP2");
+            writeEcoDhwSetpointRouted(x.c_str());
 
     # Operating mode control
     - topic: heatingpump/MANAGER/PROGRAMMSCHALTER/set
@@ -354,6 +373,8 @@ interval:
     then:
       - lambda: |-
           processSignalRequests();
+          // Retry CAN frames the driver refused earlier (MCP2515 TX buffers full)
+          retryPendingCanFrames();
 
   # Process calculated sensor updates (runs every second)
   - interval: 1s
@@ -440,7 +461,12 @@ text_sensor:
 time:
   - platform: homeassistant
     id: wpm_time
-    timezone: Europe/Berlin
+    # Fallback timezone only. Home Assistant 2026.3.0+ pushes its real zone with every
+    # time sync (ESPHome then calls set_global_tz()), so this value only applies before
+    # the first sync or with an older Home Assistant. Set it to your local zone via the
+    # `timezone` substitution in heatingpump.yaml — the WPM clock is written from this
+    # time, so a wrong zone means a wrong clock on the heat pump.
+    timezone: ${timezone}
 
 #########################################
 #                                       #

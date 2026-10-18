@@ -1,5 +1,5 @@
 {
-  "description": "Topics required on all Stiebel Eltron / Elster heat pump models. Loaded by every smoke test regardless of model.",
+  "description": "Topics required on all Stiebel Eltron / Elster heat pump models. Loaded by every smoke test regardless of model. NOTE — WW_ECO is deliberately NOT required (no heatingpump/MANAGER/WW_ECO/state): the firmware requests it on every model (the internal WW_ECO sensor reads it), but the WPL10AC/WPM3 answers with the unknown-bool sentinel '?', and the sentinel skip suppresses it before an entity is ever discovered, so the topic never appears. Verified absent on the WPL10AC on 2026-10-18. If another model reports a real value, add the line to THAT model's manifest (e.g. wpl13e_smoke.json) rather than here.",
   "required_topics": [
     "heatingpump/status",
     "heatingpump/calculated/date/state",

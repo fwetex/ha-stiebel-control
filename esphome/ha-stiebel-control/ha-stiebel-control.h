@@ -213,14 +213,20 @@ struct WritableNumberConfig {
 };
 
 static const WritableNumberConfig writableNumbers[] = {
-    // Combined DHW (WW) normal setpoint — writes BOTH Einstell registers
-    // (0x0013 + 0x0a06) to the display/operating unit (0x201), keeping them in
-    // sync (the active setpoint follows the WPM3's internal mapping).
+    // Combined DHW (WW) normal setpoint — writes EINSTELL_SPEICHERSOLLTEMP and,
+    // on WPL10AC/WPM3 only, also EINSTELL_SPEICHERSOLLTEMP2 (0x0013 + 0x0a06) to
+    // the display/operating unit (0x201), so the active setpoint follows the
+    // WPM3's internal mapping. On every other model ..._2 is the ECO setting and
+    // is left untouched — see writeDhwSetpointRouted() / SG_READY_SYNC_DHW_SETTINGS.
     {"WW_SOLL", LNAME_NUM_WW_SOLL,
      cm_manager, 20.0, 60.0, 1.0, "°C", "mdi:water-boiler", "temperature", true},
 
     // Room normal setpoint — writes RAUMSOLLTEMP_I (0x0005) to the manager.
-    // Additional to the RAUMSOLLTEMP_I entity (same value, main device).
+    // Deliberate main-device alias of the RAUMSOLLTEMP_I entity below (same
+    // register, same range/step): the raw signal stays on the sub-device, this
+    // one sits next to WW_SOLL on the main device. The two cannot diverge —
+    // RAUM_SOLL/state mirrors lastRaumSollTemp, which updateSensor refreshes from
+    // every RAUMSOLLTEMP_I read-back/broadcast, whichever entity wrote it.
     {"RAUM_SOLL", LNAME_NUM_RAUM_SOLL,
      cm_manager, 10.0, 30.0, 0.5, "°C", "mdi:home-thermometer", "temperature", true},
 
@@ -249,7 +255,17 @@ static const WritableNumberConfig writableNumbers[] = {
      cm_manager, 10.0, 30.0, 0.5, "°C", "mdi:home-thermometer", "temperature"},
 
     {"RAUMSOLLTEMP_NACHT", LNAME_NUM_RAUMSOLLTEMP_NACHT,
-     cm_manager, 10.0, 30.0, 0.5, "°C", "mdi:home-thermometer-outline", "temperature"}
+     cm_manager, 10.0, 30.0, 0.5, "°C", "mdi:home-thermometer-outline", "temperature"},
+
+#ifndef HA_MODEL_wpl10ac
+    // ECO / reduced DHW setpoint (EINSTELL_SPEICHERSOLLTEMP2) — an independent
+    // register on every model except the WPL10AC/WPM3. There WW_SOLL keeps it in
+    // sync with the normal setpoint instead (see SG_READY_SYNC_DHW_SETTINGS), so
+    // the entity does not exist. Appended last on purpose: that keeps the indices
+    // of every entry above stable across the model-specific builds.
+    {"EINSTELL_SPEICHERSOLLTEMP2", LNAME_NUM_SPEICHERSOLLTEMP2,
+     cm_manager, 20.0, 60.0, 1.0, "°C", "mdi:thermometer-low", "temperature"}
+#endif
 };
 
 static const size_t WRITABLE_NUMBER_COUNT = sizeof(writableNumbers) / sizeof(WritableNumberConfig);
@@ -331,6 +347,12 @@ struct PollSlot {
 };
 static std::vector<PollSlot> pollSlots;
 
+// Resume point for the round-robin walk over pollSlots: each call starts where the
+// previous one stopped. Without it every call restarts at slot 0 and, because
+// MAX_REQUESTS_PER_ITERATION is 1, the lowest-indexed due slot is polled on every
+// iteration while the slots behind it starve.
+static int signalProcessingStartIndex = 0;
+
 // Track sensor values for calculated sensors
 static float lastWpVorlaufIst = NAN;
 static float lastRuecklaufIstTemp = NAN;
@@ -377,6 +399,14 @@ static std::unordered_map<UidKey, std::string, UidKeyHash> uidCache;
 // registers over time (TEST_OBJEKT, ESTRICH_*, BIVALENZ*, …); each would
 // otherwise add a permanent uid + HA entity and grow the heap in steps.
 // Known signals keep updating; NEW ones are ignored once the cap is reached.
+//
+// 300 is sized from measurement, not guesswork: ~87 entities were observed on a
+// WPL10AC installation (34 of them from the poll table, the rest arriving as
+// broadcasts), so this leaves ~3x headroom. The growth source itself is removed by
+// blacklisting 260 registers (250 TEST_OBJEKT_*, 7 ESTRICH_*, 2 FESTWERT*,
+// 1 MAX_TEMP_KESSEL_HEIZBETRIEB; two more predate this work upstream). Hitting the
+// cap is logged as an ERROR once per boot, and the 10-minute CONTAINERS line prints
+// the count against this cap.
 static const size_t MAX_PUBLISHED_SIGNALS = 300;
 
 // ============================================================================
@@ -432,6 +462,16 @@ inline bool isValidTimeString(const char* s)
         && (s[6]-'0')*10 + (s[7]-'0') < 60;
 }
 
+// Days in a month, honouring leap years — so "2026-02-30" and "2025-02-29" are
+// rejected too, not just the obviously out-of-range fields.
+inline int daysInMonth(int year, int month)
+{
+    static const uint8_t daysPerMonth[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+    if (month < 1 || month > 12) return 0;
+    if (month == 2 && (year % 4 == 0) && (year % 100 != 0 || year % 400 == 0)) return 29;
+    return daysPerMonth[month - 1];
+}
+
 inline bool isValidDateString(const char* s)
 {
     if (!s || strlen(s) != 10) return false;
@@ -440,6 +480,15 @@ inline bool isValidDateString(const char* s)
         if (i == 4 || i == 7) continue;
         if (!isDigitChar(s[i])) return false;
     }
+
+    // Digits and separators alone accept "2026-13-99", which would be written
+    // straight into the heat pump clock — the time part is range-checked already.
+    const int year  = (s[0]-'0')*1000 + (s[1]-'0')*100 + (s[2]-'0')*10 + (s[3]-'0');
+    const int month = (s[5]-'0')*10   + (s[6]-'0');
+    const int day   = (s[8]-'0')*10   + (s[9]-'0');
+
+    if (month < 1 || month > 12) return false;
+    if (day < 1 || day > daysInMonth(year, month)) return false;
     return true;
 }
 
@@ -584,6 +633,53 @@ const ElsterIndex *processCanMessage(const std::vector<uint8_t> &msg, uint32_t c
     return ei;
 }
 
+// ── Deferred CAN transmissions ──────────────────────────────────────────────
+// readSignal()/writeSignal() hand frames straight to the CAN driver, which returns
+// an error when it has no room. On the ESP32-S3 (TWAI) build that never happens:
+// tx_queue_len is 64 and the driver queues with FIFO ordering. The ESP32-S2
+// MCP2515 build has only three TX buffers and its driver returns ERROR_ALLTXBUSY
+// instead of queueing, so a burst — the SG Ready state change issues up to 8
+// frames from a single lambda (write+read for mode, DHW and room) — would silently
+// lose everything past the third. Frames the driver refuses are parked here and
+// retried on the next 1 s request-manager tick: far more than the ~20 ms the bus
+// needs to drain three frames at 20 kbps.
+struct PendingCanFrame {
+    const CanMember* member;
+    const ElsterIndex* signal;
+    bool isWrite;
+    char value[16];
+};
+static const size_t MAX_CAN_VALUE_LEN = sizeof(PendingCanFrame::value);
+static std::vector<PendingCanFrame> pendingCanFrames;
+static const size_t MAX_PENDING_CAN_FRAMES = 32;
+static uint32_t lastCanBusyLogTs = 0;
+
+inline void deferCanFrame(const CanMember* cm, const ElsterIndex* ei, bool isWrite, const char* value) {
+    if (pendingCanFrames.size() >= MAX_PENDING_CAN_FRAMES) {
+        ESP_LOGW("CAN_TX", "Deferred-frame queue full (%zu) — dropping %s \"%s\"",
+                 pendingCanFrames.size(), isWrite ? "write" : "read", ei->Name);
+        return;
+    }
+    PendingCanFrame p;
+    p.member  = cm;
+    p.signal  = ei;
+    p.isWrite = isWrite;
+    if (value != nullptr) {
+        snprintf(p.value, sizeof(p.value), "%s", value);
+    } else {
+        p.value[0] = '\0';
+    }
+    pendingCanFrames.push_back(p);
+
+    // Throttled: a refused burst would otherwise log once per frame.
+    const uint32_t now = millis();
+    if (now - lastCanBusyLogTs > 5000U) {
+        lastCanBusyLogTs = now;
+        ESP_LOGW("CAN_TX", "CAN TX busy — deferring %s \"%s\" for retry (queued: %zu)",
+                 isWrite ? "write" : "read", ei->Name, pendingCanFrames.size());
+    }
+}
+
 void readSignal(const CanMember *cm, const ElsterIndex *ei)
 {
     constexpr bool use_extended_id = false; // No use of extended ID
@@ -617,7 +713,11 @@ void readSignal(const CanMember *cm, const ElsterIndex *ei)
     snprintf(logmsg, sizeof(logmsg), "READ \"%s\" (0x%04x) FROM %s (0x%02x {0x%02x, 0x%02x}): %02x, %02x, %02x, %02x, %02x, %02x, %02x", ei->Name, ei->Index, cm->Name, (unsigned)cm->CanId, readId.first, readId.second, data[0], data[1], data[2], data[3], data[4], data[5], data[6]);
     ESP_LOGI("readSignal()", "%s", logmsg);
 
-    id(my_can).send_data(CanMembers[cm_pc].CanId, use_extended_id, data);
+    // A refused frame (driver queue/buffers full) is deferred instead of dropped —
+    // see deferCanFrame(). send_data returns canbus::Error, where 0 == ERROR_OK.
+    if (id(my_can).send_data(CanMembers[cm_pc].CanId, use_extended_id, data) != 0) {
+        deferCanFrame(cm, ei, false, nullptr);
+    }
 }
 
 void readSignal(const CanMember *cm, const char *elsterName)
@@ -628,6 +728,11 @@ void readSignal(const CanMember *cm, const char *elsterName)
 
 void writeSignal(const CanMember *cm, const ElsterIndex *ei, const char *&str)
 {
+    // TranslateString() CONSUMES `str` (it advances the pointer past the number),
+    // so keep a copy of the original text for the deferred-retry path below.
+    char originalValue[MAX_CAN_VALUE_LEN];
+    snprintf(originalValue, sizeof(originalValue), "%s", str != nullptr ? str : "");
+
     bool use_extended_id = false;
     int writeValue = TranslateString(str, ei->Type);
     if (writeValue == -1) {
@@ -666,7 +771,33 @@ void writeSignal(const CanMember *cm, const ElsterIndex *ei, const char *&str)
              data[0], data[1], data[2], data[3], data[4], data[5], data[6]);
     ESP_LOGI("writeSignal()", "%s", logmsg);
 
-    id(my_can).send_data(CanMembers[cm_pc].CanId, use_extended_id, data);
+    // A refused frame (driver queue/buffers full) is deferred instead of dropped —
+    // see deferCanFrame(). send_data returns canbus::Error, where 0 == ERROR_OK.
+    if (id(my_can).send_data(CanMembers[cm_pc].CanId, use_extended_id, data) != 0) {
+        deferCanFrame(cm, ei, true, originalValue);
+    }
+}
+
+// Retry the frames a driver refused earlier. Called from the 1 s request-manager
+// tick (common.yaml). Re-entrant by construction: the queue is swapped out first,
+// so a frame the driver refuses again simply defers itself back onto the now-empty
+// queue for the following tick.
+void retryPendingCanFrames() {
+    if (pendingCanFrames.empty()) return;
+
+    std::vector<PendingCanFrame> retry;
+    retry.swap(pendingCanFrames);
+    for (PendingCanFrame& p : retry) {
+        if (p.isWrite) {
+            const char* value = p.value;   // writeSignal takes const char*&
+            writeSignal(p.member, p.signal, value);
+        } else {
+            readSignal(p.member, p.signal);
+        }
+    }
+    if (!pendingCanFrames.empty()) {
+        ESP_LOGD("CAN_TX", "Retry: %zu frame(s) still deferred", pendingCanFrames.size());
+    }
 }
 
 void writeSignal(const CanMember *cm, const char *elsterName, const char *str)
@@ -1571,11 +1702,43 @@ inline void writeCanSignalRouted(const char* signalName, const char* value) {
     readSignal(member, signalName);
 }
 
+// Write the DHW (WW) setpoint to every Einstell register this model needs.
+//
+// WPL10AC/WPM3 (SG_READY_SYNC_DHW_SETTINGS): the active setpoint may follow
+// either Einstell register, so both are written with the same value.
+// Every other model: EINSTELL_SPEICHERSOLLTEMP2 is the ECO setting (on the
+// WPL13E) or does not exist at all (WPF10) and must NOT be written by a normal
+// setpoint change, or the user's ECO value is silently overwritten.
+inline void writeDhwSetpointRouted(const char* value) {
+    writeCanSignalRouted("EINSTELL_SPEICHERSOLLTEMP", value);
+#ifdef SG_READY_SYNC_DHW_SETTINGS
+    writeCanSignalRouted("EINSTELL_SPEICHERSOLLTEMP2", value);
+#endif
+}
+
+// Write the ECO / reduced DHW setpoint (EINSTELL_SPEICHERSOLLTEMP2).
+//
+// WPL10AC/WPM3: this register is not a user-facing setting — WW_SOLL keeps it in
+// sync with the normal setpoint (see SG_READY_SYNC_DHW_SETTINGS), so a write here
+// is ignored and logged rather than fighting that mapping.
+// Every other model: it is an independent register (ECO on the WPL13E), so it is
+// written to the manager like any other setpoint.
+inline void writeEcoDhwSetpointRouted(const char* value) {
+#ifdef HA_MODEL_wpl10ac
+    (void)value;
+    ESP_LOGW("MQTT_CMD", "EINSTELL_SPEICHERSOLLTEMP2 is kept in sync by WW_SOLL on WPL10AC - ignoring");
+#else
+    writeSignal(&CanMembers[cm_manager], "EINSTELL_SPEICHERSOLLTEMP2", value);
+    readSignal(&CanMembers[cm_manager], "EINSTELL_SPEICHERSOLLTEMP2");
+#endif
+}
+
 class EspHomeSgReadyIO : public ISgReadyIO {
 public:
     static ESPPreferenceObject nvsDhw;
     static ESPPreferenceObject nvsRoom;
     static ESPPreferenceObject nvsActive;
+    static ESPPreferenceObject nvsState;
 
     void writeCanSignal(const char* signalName, const char* value) override {
         writeCanSignalRouted(signalName, value);
@@ -1598,18 +1761,20 @@ public:
         publishMqttChecked(topic, value, strlen(value), 0, true);
     }
 
-    void saveBoostState(float dhw, float room, bool active) override {
+    void saveBoostState(float dhw, float room, bool active, int state) override {
         nvsDhw.save(&dhw);
         nvsRoom.save(&room);
         nvsActive.save(&active);
-        ESP_LOGD("NVS", "Saved boost state: DHW=%.1f, Room=%.1f, active=%d",
-                 dhw, room, (int)active);
+        nvsState.save(&state);
+        ESP_LOGD("NVS", "Saved boost state: DHW=%.1f, Room=%.1f, active=%d, state=%d",
+                 dhw, room, (int)active, state);
     }
 
-    bool loadBoostState(float& dhw, float& room, bool& active) override {
+    bool loadBoostState(float& dhw, float& room, bool& active, int& state) override {
         bool ok = nvsActive.load(&active);
         nvsDhw.load(&dhw);
         nvsRoom.load(&room);
+        if (!nvsState.load(&state)) state = 0; // nothing stored -> unknown state
         return ok;
     }
 };
@@ -1617,19 +1782,32 @@ public:
 ESPPreferenceObject EspHomeSgReadyIO::nvsDhw;
 ESPPreferenceObject EspHomeSgReadyIO::nvsRoom;
 ESPPreferenceObject EspHomeSgReadyIO::nvsActive;
+ESPPreferenceObject EspHomeSgReadyIO::nvsState;
 
 static EspHomeSgReadyIO sgReadyIO;
 static SgReadyController sgReadyController(sgReadyIO);
 
 // Wall time of the last SG Ready command (state or boost) — refreshed by any
 // control input, consumed by the watchdog below.
+//
+// sgReadyWatchdogArmed is separate from the timestamp because millis() can still
+// be 0 during on_boot, which would be indistinguishable from "never commanded" if
+// 0 were used as the sentinel. It is set by any command and when a boost or
+// standby is restored from NVS at boot.
 static uint32_t lastSgReadyCommandTs = 0;
+static bool sgReadyWatchdogArmed = false;
+
+inline void armSgReadyWatchdog() {
+    lastSgReadyCommandTs = millis();
+    sgReadyWatchdogArmed = true;
+}
 
 // Called from on_boot lambda in common.yaml
 void initBoostStatePrefs() {
     EspHomeSgReadyIO::nvsDhw    = global_preferences->make_preference<float>(0xB007BA5E, true);
     EspHomeSgReadyIO::nvsRoom   = global_preferences->make_preference<float>(0xB007BA5F, true);
     EspHomeSgReadyIO::nvsActive = global_preferences->make_preference<bool> (0xB007BA60, true);
+    EspHomeSgReadyIO::nvsState  = global_preferences->make_preference<int>  (0xB007BA61, true);
     ESP_LOGI("NVS", "Boost state preferences initialized");
 }
 
@@ -1637,12 +1815,20 @@ void initBoostStatePrefs() {
 void loadBoostState() {
     sgReadyController.loadFromNvs();
     currentSgReadyState = sgReadyController.currentState();
-    ESP_LOGI("NVS", "Boost state loaded, active=%d", (int)sgReadyController.isActive());
+    if (sgReadyController.isActive()) {
+        // A boost (or standby) survived the reboot. Arm the watchdog here: the
+        // pre-reboot command timestamp is not persisted, so the watchdog window
+        // restarts now — otherwise a stuck boost would never be rescued on this
+        // boot, which is exactly what the watchdog exists to prevent.
+        armSgReadyWatchdog();
+    }
+    ESP_LOGI("NVS", "Boost state loaded, active=%d, state=%d",
+             (int)sgReadyController.isActive(), sgReadyController.currentState());
 }
 
 // Called from MQTT on_message lambda in common.yaml
 void applySgReadyState(int state) {
-    lastSgReadyCommandTs = millis();
+    armSgReadyWatchdog();
     ESP_LOGI("SG_READY", "Applying SG Ready state %d", state);
     if (sgReadyController.applyState(state)) {
         currentSgReadyState = sgReadyController.currentState();
@@ -1656,10 +1842,10 @@ inline float sgReadyBoostState3Value() { return sgReadyController.boostState3();
 inline float sgReadyBoostState4Value() { return sgReadyController.boostState4(); }
 inline float sgReadyRoomBoost3Value() { return sgReadyController.roomBoost3(); }
 inline float sgReadyRoomBoost4Value() { return sgReadyController.roomBoost4(); }
-inline void  setSgReadyBoost3(float v) { lastSgReadyCommandTs = millis(); sgReadyController.setBoostState3(v); }
-inline void  setSgReadyBoost4(float v) { lastSgReadyCommandTs = millis(); sgReadyController.setBoostState4(v); }
-inline void  setSgReadyRoomBoost3(float v) { lastSgReadyCommandTs = millis(); sgReadyController.setRoomBoost3(v); }
-inline void  setSgReadyRoomBoost4(float v) { lastSgReadyCommandTs = millis(); sgReadyController.setRoomBoost4(v); }
+inline void  setSgReadyBoost3(float v) { armSgReadyWatchdog(); sgReadyController.setBoostState3(v); }
+inline void  setSgReadyBoost4(float v) { armSgReadyWatchdog(); sgReadyController.setBoostState4(v); }
+inline void  setSgReadyRoomBoost3(float v) { armSgReadyWatchdog(); sgReadyController.setRoomBoost3(v); }
+inline void  setSgReadyRoomBoost4(float v) { armSgReadyWatchdog(); sgReadyController.setRoomBoost4(v); }
 
 // Watchdog against a dead control source: only rescues from a stuck BOOST (3/4).
 // Standby (EVU lock) is a deliberate long-term state and stays as-is. If a boost
@@ -1667,12 +1853,9 @@ inline void  setSgReadyRoomBoost4(float v) { lastSgReadyCommandTs = millis(); sg
 // it, fall back to Normal (heat pump keeps working, protected against a
 // permanently boosted state even if the primary control is gone).
 void checkSgReadyWatchdog() {
-    const uint32_t now = millis();
-    if (lastSgReadyCommandTs == 0) return;  // never commanded on this boot
-    const int st = sgReadyController.currentState();
-    if (st == SgReadyController::STATE_NORMAL) return;
-    if (st == SgReadyController::STATE_EVU_LOCK) return;  // standby: intended, no auto-recover
-    if (now - lastSgReadyCommandTs < SgReadyController::SG_READY_WATCHDOG_MS) return;
+    if (!sgReadyWatchdogArmed) return;  // nothing commanded, no boost restored
+    // The decision itself lives in the controller (pure, natively tested).
+    if (!sgReadyController.watchdogShouldRecover(millis(), lastSgReadyCommandTs)) return;
     ESP_LOGW("SG_READY_WATCHDOG", "Boost active without command for %lus — returning to Normal",
              (unsigned long)(SgReadyController::SG_READY_WATCHDOG_MS / 1000UL));
     applySgReadyState(SgReadyController::STATE_NORMAL);
@@ -1768,6 +1951,31 @@ inline bool isInvalidSignalValue(const std::string &value) {
     return value == "-255" || value == "?" || value == "--" || value == "-32768";
 }
 
+// Tell Home Assistant that an already-known signal currently has no valid value.
+//
+// `None` is the payload the MQTT sensor and binary_sensor platforms turn into
+// "unknown" — publishing an empty payload instead would be IGNORED for numeric
+// sensors (those with device_class/unit set) and leave the stale retained value in
+// place, which is what made a dead sensor look like a live reading.
+//
+// The lookup is deliberately non-creating: a signal that was never published stays
+// unpublished, so the ghost-entity protection of the sentinel skip is preserved.
+void publishSignalUnavailable(const CanMember &cm, const ElsterIndex *ei) {
+    if (!ei || !ei->Name) return;
+
+    // Same key form as the MAX_PUBLISHED_SIGNALS cap check: uidCache only contains
+    // signals whose discovery was actually published.
+    UidKey probe{cm.CanId, ei->Name};
+    if (uidCache.find(probe) == uidCache.end()) return;
+
+    char stateTopic[128];
+    int written = snprintf(stateTopic, sizeof(stateTopic), "heatingpump/%s/%s/state", cm.Name, ei->Name);
+    if (written >= (int)sizeof(stateTopic)) {
+        ESP_LOGW("MQTT", "Topic too long for %s/%s, truncated", cm.Name, ei->Name);
+    }
+    publishMqttChecked(stateTopic, "None", 4, 0, true);
+}
+
 void updateSensor(const CanMember &cm, const ElsterIndex *ei, const std::string &value)
 {
     // Skip empty values
@@ -1775,8 +1983,12 @@ void updateSensor(const CanMember &cm, const ElsterIndex *ei, const std::string 
         return;
     }
 
-    // Skip invalid sentinel values (see isInvalidSignalValue)
+    // A sentinel means "not available" (see isInvalidSignalValue). Skipping it
+    // keeps ghost entities out of HA, but for an entity that already exists that
+    // would leave the last good retained value in place — a dead signal would look
+    // like a live reading that never changes. Publish `None` (unknown) instead.
     if (isInvalidSignalValue(value)) {
+        publishSignalUnavailable(cm, ei);
         return;
     }
     
@@ -1797,6 +2009,19 @@ void updateSensor(const CanMember &cm, const ElsterIndex *ei, const std::string 
     {
         UidKey probe{cm.CanId, ei->Name};
         if (uidCache.find(probe) == uidCache.end() && discoveredSignals.size() >= MAX_PUBLISHED_SIGNALS) {
+            // Logged as an ERROR, once per boot: from here on real entities can go
+            // missing, and that must not happen silently. Once per boot because a
+            // flood of new registers must not flood the log. The 10-minute
+            // CONTAINERS line reports the count against the cap continuously.
+            static bool capReachedLogged = false;
+            if (!capReachedLogged) {
+                capReachedLogged = true;
+                ESP_LOGE("MQTT",
+                         "Signal cap reached (%u entities) — ignoring new signal %s/%s and every "
+                         "further one. If this is a real entity, raise MAX_PUBLISHED_SIGNALS in "
+                         "ha-stiebel-control.h.",
+                         (unsigned)MAX_PUBLISHED_SIGNALS, cm.Name, ei->Name);
+            }
             return;
         }
     }
@@ -1970,6 +2195,19 @@ void updateSensor(const CanMember &cm, const ElsterIndex *ei, const std::string 
     }
 }
 
+// Wrap-safe "has this deadline passed?" test for millis()-based schedules.
+//
+// A plain `now >= deadline` breaks at the ~49.7 day millis() wrap: a deadline set
+// just before the wrap reads as ~49 days in the FUTURE afterwards, so whatever it
+// schedules stalls for that long. The unsigned subtraction + int32_t cast is the
+// standard idiom — the low 32 bits of the difference are what matter, which still
+// holds when the host's `long` is 64-bit (native test build).
+// Deadlines more than ~24.8 days ahead (half the range) are indistinguishable
+// from a wrapped past deadline, so keep intervals far below that.
+inline bool deadlineReached(uint32_t now, uint32_t deadline) {
+    return (int32_t)(now - deadline) >= 0;
+}
+
 // Helper function to generate random number in range [min, max) using ESP32 hardware RNG
 // esp_random() uses hardware entropy sources and doesn't need seeding
 unsigned long getRandomInRange(unsigned long min, unsigned long max) {
@@ -2069,34 +2307,34 @@ void processCalculatedSensors() {
     if (!initialized) return; // Wait for request manager to start
     
     // Check and publish Delta T sensors
-    if (now >= nextDeltaTUpdate) {
+    if (deadlineReached(now, nextDeltaTUpdate)) {
         publishDeltaTContinuous();
         publishDeltaTRunning();
         nextDeltaTUpdate = now + (CALC_DELTA_T_FREQUENCY * 1000UL) + getRandomInRange(0, 1000);
     }
     
     // Check and publish Compressor sensor
-    if (now >= nextCompressorUpdate) {
+    if (deadlineReached(now, nextCompressorUpdate)) {
         publishCompressorActive();
         nextCompressorUpdate = now + (CALC_COMPRESSOR_FREQUENCY * 1000UL) + getRandomInRange(0, 1000);
     }
     
     // Check and publish Date/Time sensors
-    if (now >= nextDateTimeUpdate) {
+    if (deadlineReached(now, nextDateTimeUpdate)) {
         publishDate();
         publishTime();
         nextDateTimeUpdate = now + (CALC_DATETIME_FREQUENCY * 1000UL) + getRandomInRange(0, 1000);
     }
     
     // Check and publish Betriebsart sensor (only if SOMMERBETRIEB value is available)
-    if (now >= nextBetriebsartUpdate) {
+    if (deadlineReached(now, nextBetriebsartUpdate)) {
         // Betriebsart requires a value parameter, so we skip auto-publishing
         // It will be published when SOMMERBETRIEB signal is received
         nextBetriebsartUpdate = now + (CALC_BETRIEBSART_FREQUENCY * 1000UL) + getRandomInRange(0, 1000);
     }
 
     // Check and publish CAN diagnostic sensors
-    if (now >= nextCanDiagUpdate) {
+    if (deadlineReached(now, nextCanDiagUpdate)) {
         publishCanDiagnostics();
         nextCanDiagUpdate = now + (CALC_CAN_DIAG_FREQUENCY * 1000UL) + getRandomInRange(0, 1000);
     }
@@ -2121,8 +2359,8 @@ void processSignalRequests() {
     static uint32_t lastContainerLog = 0;
     if (now - lastContainerLog > 600000U) {
         lastContainerLog = now;
-        ESP_LOGI("CONTAINERS", "uidCache=%zu discoveredSignals=%zu pollSlots=%zu copEnergy=%zu freeHeap=%u minFreeHeap=%u",
-                 (size_t)uidCache.size(), (size_t)discoveredSignals.size(),
+        ESP_LOGI("CONTAINERS", "uidCache=%zu discoveredSignals=%zu/%u pollSlots=%zu copEnergy=%zu freeHeap=%u minFreeHeap=%u",
+                 (size_t)uidCache.size(), (size_t)discoveredSignals.size(), (unsigned)MAX_PUBLISHED_SIGNALS,
                  (size_t)pollSlots.size(), (size_t)copEnergyValues.size(),
                  (unsigned)diagFreeHeap(), (unsigned)diagMinFreeHeap());
     }
@@ -2191,6 +2429,9 @@ void processSignalRequests() {
             }
         }
 
+        // The schedule was just (re)built — start the round-robin walk at the top.
+        signalProcessingStartIndex = 0;
+
         ESP_LOGI("REQUEST_MGR", "Initialized %d poll slots", (int)pollSlots.size());
     }
     
@@ -2202,10 +2443,15 @@ void processSignalRequests() {
         return;
     }
 
-    // Walk the prebuilt schedule as a plain indexed array. lastGroupSentThisIteration
-    // enforces that a cm_other fan-out group sends at most one member per iteration.
+    // Walk the prebuilt schedule as a plain indexed array, starting where the
+    // previous call stopped: round-robin, so no slot can starve. The resume point
+    // is stored again when this call ends. lastGroupSentThisIteration enforces
+    // that a cm_other fan-out group sends at most one member per iteration.
+    if (signalProcessingStartIndex >= slotCount) {
+        signalProcessingStartIndex = 0; // schedule was (re)built
+    }
     int processedCount = 0;
-    int currentIndex = 0;
+    int currentIndex = signalProcessingStartIndex;
     int lastGroupSentThisIteration = 0;
 
     while (processedCount < slotCount && requestsSentThisIteration < MAX_REQUESTS_PER_ITERATION) {
@@ -2217,7 +2463,7 @@ void processSignalRequests() {
             continue; // This group already sent a member this iteration -> defer
         }
 
-        if (now >= slot.nextAt) {
+        if (deadlineReached(now, slot.nextAt)) {
             readSignal(slot.member, slot.signal);
             requestsSentThisIteration++;
             lastGroupSentThisIteration = slot.groupId;
@@ -2231,6 +2477,10 @@ void processSignalRequests() {
 
         currentIndex = (currentIndex + 1) % slotCount;
     }
+
+    // Remember where to resume: the walk already moved past everything it served,
+    // so the next call picks up directly behind this one.
+    signalProcessingStartIndex = currentIndex;
 }
 
 void processAndUpdate(uint32_t can_id, const std::vector<uint8_t> &msg)

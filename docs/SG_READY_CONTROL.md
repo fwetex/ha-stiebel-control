@@ -15,7 +15,7 @@ HA-Monitor (scharfer Watchdog) ──MQTT──▶  select.heatingpump_sg_ready_
 | Ebene | Rolle |
 |---|---|
 | **evcc** | PV-/Netz-/Tarif-Logik; schreibt SG-Ready-Modus **nur bei Änderung** (kein Heartbeat nötig) |
-| **ESP** | setzt `PROGRAMMSCHALTER` + Solltwerte; **Firmware-Watchdog**: nur Boost 3/4 → Normal nach **3 h** Stille; **Standby (1) wird nie automatisch beendet** |
+| **ESP** | setzt `PROGRAMMSCHALTER` + Solltwerte; **Firmware-Watchdog**: nur Boost 3/4 → Normal nach **12 h** Stille (`sg_ready_watchdog_min`, Default 720 min); **Standby (1) wird nie automatisch beendet** |
 | **HA** | kontextualer Watchdog (Boost > 1 h UND PV < Schwelle → Normal), ESP-offline-Erkennung, ggf. Shelly-Fallback |
 
 ---

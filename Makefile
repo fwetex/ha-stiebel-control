@@ -1,4 +1,4 @@
-.PHONY: compile compile-s2 check logs upload config test test-all clean-tests smoke-test capture-baseline
+.PHONY: compile compile-s2 check logs upload config test test-all clean-tests smoke-test capture-baseline esphome-latest
 
 # Extract model and MQTT credentials from local config files
 DEVICE_MODEL ?= $(shell grep 'device_model:' esphome/heatingpump.yaml | grep -v '^\s*\#' | head -1 | sed 's/.*"\(.*\)".*/\1/')
@@ -36,8 +36,13 @@ compile:
 	cd esphome && esphome compile heatingpump.yaml
 
 # Compile the ESP32-S2 / MCP2515 variant
+#
+# ESPHOME_BUILD_PATH gives this variant its own build directory. Both entry points use
+# device_name "heatingpump", so without it they share .esphome/build/heatingpump and
+# swap IDF_TARGET in place — which fails with "IDF_TARGET ... does not match" as soon
+# as the other variant was built last, forcing a manual clean between the two.
 compile-s2:
-	cd esphome && esphome compile ci_heatingpump_s2.yaml
+	cd esphome && ESPHOME_BUILD_PATH=build-s2 esphome compile ci_heatingpump_s2.yaml
 
 # Full firmware quality gate — both board variants must compile cleanly
 check: test compile compile-s2
@@ -53,6 +58,13 @@ upload:
 # Dump merged YAML for debugging package includes
 config:
 	cd esphome && esphome config heatingpump.yaml
+
+# Check whether a newer ESPHome release is available on PyPI (installed vs latest)
+esphome-latest:
+	@.venv/bin/python -c "import json,urllib.request as u,esphome.const as c; \
+	  latest=json.load(u.urlopen('https://pypi.org/pypi/esphome/json',timeout=15))['info']['version']; \
+	  print('installed:', c.__version__); print('latest:   ', latest); \
+	  print('up to date' if c.__version__==latest else 'update available: ' + latest)"
 
 # ── Native unit tests ─────────────────────────────────────────────────────────
 

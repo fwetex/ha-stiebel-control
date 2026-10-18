@@ -21,6 +21,15 @@
 #define SG_READY_NORMAL_MODE "Tagbetrieb"
 #endif
 
+// SG Ready watchdog window, in MINUTES — overridable per installation via the
+// `sg_ready_watchdog_min` substitution (build flag HA_SG_READY_WATCHDOG_MIN).
+// 720 = 12 h (production default); a small value such as 3 makes the watchdog
+// observable on hardware within minutes. The default below applies to builds that
+// do not pass the flag (e.g. the native test build).
+#ifndef HA_SG_READY_WATCHDOG_MIN
+#define HA_SG_READY_WATCHDOG_MIN 720
+#endif
+
 // WPL 10 AC / WPM3 NOTE: the ACTIVE DHW setpoint (SPEICHERSOLLTEMP, 0x0003)
 // follows the ECO setting (EINSTELL_SPEICHERSOLLTEMP2, 0x0a06) even in
 // Komfortbetrieb — a WPM3 firmware quirk. (Writing the active register itself
@@ -47,11 +56,13 @@ public:
     // Publish a value to an MQTT state topic
     virtual void publishMqtt(const char* topic, const char* value) = 0;
 
-    // Persist boost state to NVS
-    virtual void saveBoostState(float dhwTemp, float roomTemp, bool active) = 0;
+    // Persist the SG Ready runtime state to NVS. `state` is the current SG Ready
+    // state (1-4), stored alongside the boost originals so a boost or standby that
+    // survives a reboot is still recognised afterwards.
+    virtual void saveBoostState(float dhwTemp, float roomTemp, bool active, int state) = 0;
 
     // Load boost state from NVS; returns false if nothing stored
-    virtual bool loadBoostState(float& dhwTemp, float& roomTemp, bool& active) = 0;
+    virtual bool loadBoostState(float& dhwTemp, float& roomTemp, bool& active, int& state) = 0;
 
     // Read the device's current DHW / room setpoints (for capturing the
     // "original" values before a boost). Returns the values with 0.0 for any
@@ -90,7 +101,11 @@ public:
     // arrives for this window WHILE a boost is active, the controller returns to
     // Normal — protects against a permanently boosted heat pump if the control
     // source (evcc, HA automation, MQTT) stops talking.
-    static constexpr uint32_t SG_READY_WATCHDOG_MS = 3u * 60u * 60u * 1000u;  // 3 h
+    // The window is configured in minutes (see HA_SG_READY_WATCHDOG_MIN above).
+    static_assert(HA_SG_READY_WATCHDOG_MIN <= 71582,
+                  "sg_ready_watchdog_min is too large: it must fit the 32-bit millisecond counter (~49.7 days)");
+    static constexpr uint32_t SG_READY_WATCHDOG_MS =
+        static_cast<uint32_t>(HA_SG_READY_WATCHDOG_MIN) * 60u * 1000u;
 
     struct Config {
         float boostState3 = 5.0f;   // DHW boost for state 3 (°C)
@@ -112,10 +127,17 @@ public:
     void loadFromNvs() {
         float dhw = 0.0f, room = 0.0f;
         bool active = false;
-        if (io_.loadBoostState(dhw, room, active) && active) {
+        int state = 0;
+        if (io_.loadBoostState(dhw, room, active, state) && active) {
             state_.originalDhwTemp  = (dhw  > 0.0f) ? dhw  : DEFAULT_DHW_TEMP;
             state_.originalRoomTemp = (room > 0.0f) ? room : DEFAULT_ROOM_TEMP;
             state_.active = true;
+        }
+        // Restore the SG Ready state itself. Without it a boost (or standby) that
+        // survived a reboot looks like Normal: the watchdog could never rescue a
+        // stuck boost, and Home Assistant would show the wrong state.
+        if (state >= STATE_EVU_LOCK && state <= STATE_FORCED) {
+            state_.currentState = state;
         }
     }
 
@@ -176,6 +198,18 @@ public:
     float roomBoost4()      const { return config_.roomBoost4; }
     float originalDhwTemp() const { return state_.originalDhwTemp; }
     float originalRoomTemp() const { return state_.originalRoomTemp; }
+
+    // Watchdog against a dead control source: should a boost be recovered?
+    //
+    // Only a stuck BOOST (states 3/4) is rescued. Standby (EVU lock) is a
+    // deliberate long-term state and is never auto-terminated, and Normal needs no
+    // recovery. `now` and `lastCommandTs` are passed in so this stays pure and
+    // natively testable; the subtraction form is millis()-wrap safe.
+    bool watchdogShouldRecover(uint32_t now, uint32_t lastCommandTs) const {
+        if (state_.currentState == STATE_NORMAL) return false;
+        if (state_.currentState == STATE_EVU_LOCK) return false;
+        return (uint32_t)(now - lastCommandTs) >= SG_READY_WATCHDOG_MS;
+    }
 
     // Human-readable label for a state value
     static const char* stateLabel(int state) {
@@ -256,7 +290,8 @@ private:
     }
 
     void persistState() {
-        io_.saveBoostState(state_.originalDhwTemp, state_.originalRoomTemp, state_.active);
+        io_.saveBoostState(state_.originalDhwTemp, state_.originalRoomTemp, state_.active,
+                           state_.currentState);
     }
 
     void applyEvuLock() {

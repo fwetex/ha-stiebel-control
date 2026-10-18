@@ -273,4 +273,4 @@
 #define LNAME_COP_HEIZ                         "COP Heating"
 #undef  LNAME_COP_GESAMT
 #define LNAME_COP_GESAMT                       "COP Total"
-#endif // LANGUAGE_SELECT_ACTIVE
+#endif // HA_LANGUAGE_EN
