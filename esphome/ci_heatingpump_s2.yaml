@@ -7,6 +7,7 @@ substitutions:
   language: "DE"
   timezone: "Europe/Berlin"  # fallback only — HA 2026.3.0+ pushes its real timezone
   sg_ready_watchdog_min: 720
+  poll_requests_per_tick: 2
   can_clk_pin: GPIO18
   can_mosi_pin: GPIO23
   can_miso_pin: GPIO19

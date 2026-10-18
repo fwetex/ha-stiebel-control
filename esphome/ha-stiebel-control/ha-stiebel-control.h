@@ -347,6 +347,18 @@ struct PollSlot {
 };
 static std::vector<PollSlot> pollSlots;
 
+// Nominal demand of the built schedule, in requests per second (assumes the documented
+// 1 s scheduler tick, so it can be compared directly with MAX_REQUESTS_PER_ITERATION).
+// Jitter stretches every interval slightly, which makes this an upper bound.
+inline double pollDemandPerSecond(const std::vector<PollSlot>& slots) {
+    double demand = 0.0;
+    for (const auto& slot : slots) {
+        if (slot.intervalMs == 0) continue;   // defensive: never divide by zero
+        demand += 1000.0 / static_cast<double>(slot.intervalMs);
+    }
+    return demand;
+}
+
 // Resume point for the round-robin walk over pollSlots: each call starts where the
 // previous one stopped. Without it every call restarts at slot 0 and, because
 // MAX_REQUESTS_PER_ITERATION is 1, the lowest-indexed due slot is polled on every
@@ -2465,6 +2477,20 @@ void processSignalRequests() {
         signalProcessingStartIndex = 0;
 
         ESP_LOGI("REQUEST_MGR", "Initialized %d poll slots", (int)pollSlots.size());
+
+        // Tell the operator whether the schedule fits the budget: a demand above it means
+        // intervals silently stretch (this is how the WPL13E ran at ~90 % with a 1/s limit).
+        const double demand = pollDemandPerSecond(pollSlots);
+        if (demand > static_cast<double>(MAX_REQUESTS_PER_ITERATION)) {
+            ESP_LOGW("REQUEST_MGR",
+                     "Poll schedule needs %.2f requests/s but the budget is %d/s — intervals will "
+                     "stretch; raise poll_requests_per_tick or lower the poll frequencies",
+                     demand, MAX_REQUESTS_PER_ITERATION);
+        } else {
+            ESP_LOGI("REQUEST_MGR", "Poll schedule: %.2f requests/s of %d/s budget (%.0f%%)",
+                     demand, MAX_REQUESTS_PER_ITERATION,
+                     100.0 * demand / static_cast<double>(MAX_REQUESTS_PER_ITERATION));
+        }
     }
     
     // Rate limiting: send up to MAX_REQUESTS_PER_ITERATION requests per iteration.

@@ -53,6 +53,7 @@ esphome:
       - "-DHA_MODEL_${device_model}"
       - "-DHA_LANGUAGE_${language}"
       - "-DHA_SG_READY_WATCHDOG_MIN=${sg_ready_watchdog_min}"
+      - "-DHA_MAX_REQUESTS_PER_ITERATION=${poll_requests_per_tick}"
 
 
 #########################################

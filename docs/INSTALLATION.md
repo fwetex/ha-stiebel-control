@@ -54,6 +54,7 @@ substitutions:
   language: "DE"                  # display language for HA entity names: DE (default) or EN
   timezone: "Europe/Berlin"       # fallback tz for the WPM clock — set your local zone
   sg_ready_watchdog_min: 720      # SG-Ready watchdog in minutes (720 = 12 h; e.g. 3 for testing)
+  poll_requests_per_tick: 2       # CAN polls per 1 s tick; raise if the boot log reports a stretched schedule
   can_tx_pin: YOUR_CAN_TX          # board-specific — see pin note below
   can_rx_pin: YOUR_CAN_RX          # board-specific — see pin note below
   can_id_pc: "0x680"
@@ -66,6 +67,11 @@ packages:
 ```
 
 > **Language:** German is the default. Change `language: "DE"` to `language: "EN"` if you prefer English entity names in Home Assistant. The language is baked into the firmware at compile time — recompile and re-flash after changing it.
+
+> **Poll budget:** `poll_requests_per_tick` is how many CAN poll requests the scheduler may send per
+> 1 s tick (default 2). The boot log prints the schedule's nominal demand and its utilisation
+> (`Poll schedule: 0.90 requests/s of 2/s budget (45%)`); if you add many signals and that line
+> warns about stretching, raise this value.
 
 > **SG-Ready watchdog:** `sg_ready_watchdog_min` is the window in minutes after which an active
 > boost (SG Ready state 3/4) with **no command** falls back to Normal — 720 = 12 h by default.

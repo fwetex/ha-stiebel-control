@@ -46,6 +46,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions: [Sem
   wedged (for example after heap starvation), which previously stayed dead until some unrelated
   reboot rescued it. Consequence to be aware of: while a broker outage genuinely lasts longer than
   10 minutes, expect one reboot per 10 minutes (each pausing CAN polling for ~30 s).
+- **The CAN poll budget is configurable** via `poll_requests_per_tick` (default 2, previously a
+  hard-coded 1 request per second). With one request per second the WPL13E schedule needed ~54
+  requests/min, i.e. ~90 % of the budget, so intervals stretched. The boot log now reports the
+  schedule's nominal demand and utilisation, and warns when it exceeds the budget.
 - **The time zone is configurable** via the `timezone` substitution (default `Europe/Berlin`)
   instead of being hard-coded. It is only the fallback for the clock written to the heat pump —
   Home Assistant 2026.3.0 and newer pushes its own zone on every time sync and the device adopts

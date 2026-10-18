@@ -1441,6 +1441,33 @@ TEST_CASE("processSignalRequests: trailing slots are served (round-robin start i
 }
 
 // ============================================================================
+// pollDemandPerSecond — does the schedule fit the poll budget?
+// ============================================================================
+
+TEST_CASE("pollDemandPerSecond: nominal demand of the schedule", "[can]") {
+    const ElsterIndex* ei = GetElsterIndex("RAUMSOLLTEMP_I");
+    REQUIRE(ei != nullptr);
+
+    std::vector<PollSlot> slots;
+    slots.push_back({&CanMembers[cm_manager], ei, 30000, 0, 0});
+    CHECK(pollDemandPerSecond(slots) == Approx(1000.0 / 30000.0));
+
+    // A 1-minute slot adds half the demand of a 30 s slot
+    slots.push_back({&CanMembers[cm_manager], ei, 60000, 0, 0});
+    CHECK(pollDemandPerSecond(slots) == Approx(1000.0 / 30000.0 + 1000.0 / 60000.0));
+
+    // A zero interval is ignored instead of dividing by zero
+    slots.push_back({&CanMembers[cm_manager], ei, 0, 0, 0});
+    CHECK(pollDemandPerSecond(slots) == Approx(1000.0 / 30000.0 + 1000.0 / 60000.0));
+
+    // A worst-case WPL13E-sized schedule must fit the default budget
+    std::vector<PollSlot> heavy;
+    for (int i = 0; i < 57; i++) heavy.push_back({&CanMembers[cm_manager], ei, 30000, 0, 0});
+    CHECK(pollDemandPerSecond(heavy) == Approx(57 * 1000.0 / 30000.0));
+    CHECK(pollDemandPerSecond(heavy) < MAX_REQUESTS_PER_ITERATION);
+}
+
+// ============================================================================
 // CAN TX deferral — a driver with few TX buffers (MCP2515) refuses frames
 // ============================================================================
 

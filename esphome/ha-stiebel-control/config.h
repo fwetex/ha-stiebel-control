@@ -30,8 +30,15 @@
 // Delay after boot before starting signal requests (milliseconds)
 #define STARTUP_DELAY_MS 30000
 
-// Maximum number of requests to send per iteration (rate limiting)
-#define MAX_REQUESTS_PER_ITERATION 1
+// Maximum number of poll requests to send per scheduler iteration (rate limiting).
+// Configurable per installation via the `poll_requests_per_tick` substitution. The tick
+// is the 1 s interval in common.yaml, so the budget doubles as requests/second; the
+// schedule's nominal demand is logged once at boot (pollDemandPerSecond()).
+// Default 2 keeps the WPL13E schedule (~54 req/min) at ~45 % instead of ~90 %.
+#ifndef HA_MAX_REQUESTS_PER_ITERATION
+#define HA_MAX_REQUESTS_PER_ITERATION 2
+#endif
+#define MAX_REQUESTS_PER_ITERATION HA_MAX_REQUESTS_PER_ITERATION
 
 // ============================================================================
 // TIMING INTERVALS (for use in signalRequests table)
