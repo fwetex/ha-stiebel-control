@@ -210,6 +210,19 @@ To support additional heat pump models:
    - Uncomment ESP32-S2 block, compile
 5. Monitor logs after upload for CAN errors or buffer overflows
 
+### Commit Convention
+**One commit per completed change — never batch unrelated work:**
+1. Finish and verify **one** logical change (one review item / feature / fix). Its test and its
+   documentation note belong in the same commit.
+2. Gate before committing: `make test` + `make compile`. `make compile-s2` and `make smoke-test`
+   are milestone checks (e.g. before pushing), not per-commit requirements.
+3. Commit as soon as that change is verified — no "clean up later" batching. Each commit stays
+   bisectable, and `git revert <sha>` cleanly removes exactly one change.
+4. Message: repo convention (`fix:` / `feat:` / `perf:` / `docs:` / `chore:`) and, when the change
+   answers review feedback, name the review item in the body.
+5. If a part can only be verified on hardware, still commit the code and say
+   "hardware verification pending" in the body.
+
 ### MQTT Discovery Pattern
 **How entities appear in Home Assistant:**
 - ESPHome automatically publishes MQTT discovery messages

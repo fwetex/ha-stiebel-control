@@ -107,11 +107,15 @@ These rules are also in `.github/copilot-instructions.md`, but are repeated here
 discoverability:
 
 1. **Always run `make check` before committing** any change that touches firmware files
-2. **Always run `make smoke-test` after `make upload`** — do not declare a flash successful until it passes
-3. **Never commit `esphome/secrets.yaml`** — it is gitignored and contains real credentials
-4. **`api_encryption_key` must be in `secrets.yaml`** and match what HA's ESPHome integration stores — if it changes, the HA integration entry must be re-adopted
-5. **Edit `.github/copilot-instructions.md`**, not `CLAUDE.md`, for persistent agent guidance
-6. **Bump `version:` in `common.yaml`** before tagging a release
+2. **Commit one completed change at a time** (see *Commit Convention* in
+   `.github/copilot-instructions.md`): code + test + docs in one commit, verified with `make test`
+   and `make compile` first. Do not batch unrelated work — separate commits keep the history
+   bisectable and make `git revert <sha>` a clean undo of a single change.
+3. **Always run `make smoke-test` after `make upload`** — do not declare a flash successful until it passes
+4. **Never commit `esphome/secrets.yaml`** — it is gitignored and contains real credentials
+5. **`api_encryption_key` must be in `secrets.yaml`** and match what HA's ESPHome integration stores — if it changes, the HA integration entry must be re-adopted
+6. **Edit `.github/copilot-instructions.md`**, not `CLAUDE.md`, for persistent agent guidance
+7. **Bump `version:` in `common.yaml`** before tagging a release
 
 ---
 
