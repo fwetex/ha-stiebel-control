@@ -1508,7 +1508,7 @@ void republishAllDiscoveries() {
 
         // Register no longer in the table, or blacklisted since it was published:
         // stop advertising the entity and drop it from the registry.
-        if (ei == nullptr || ei->Index == 0 || isPermanentlyBlacklisted(ei->Name)) {
+        if (ei == nullptr || ei->Index == 0 || ei->isBlacklisted) {
             pruned += discoveredSignals.erase(uid);
             continue;
         }
@@ -2397,9 +2397,12 @@ void processSignalRequests() {
     static uint32_t lastContainerLog = 0;
     if (now - lastContainerLog > 600000U) {
         lastContainerLog = now;
-        ESP_LOGI("CONTAINERS", "uidCache=%zu discoveredSignals=%zu/%u pollSlots=%zu copEnergy=%zu freeHeap=%u minFreeHeap=%u",
+        ESP_LOGI("CONTAINERS", "uidCache=%zu discoveredSignals=%zu/%u pollSlots=%zu copEnergy=%zu "
+                 "idxCache=%zu/%zu nameCache=%zu/%zu freeHeap=%u minFreeHeap=%u",
                  (size_t)uidCache.size(), (size_t)discoveredSignals.size(), (unsigned)MAX_PUBLISHED_SIGNALS,
                  (size_t)pollSlots.size(), (size_t)copEnergyValues.size(),
+                 GetElsterIndexCacheSize(), GetElsterCacheLimit(),
+                 GetElsterNameCacheSize(), GetElsterCacheLimit(),
                  (unsigned)diagFreeHeap(), (unsigned)diagMinFreeHeap());
     }
 
@@ -2435,8 +2438,8 @@ void processSignalRequests() {
                 continue;
             }
             
-            // Skip blacklisted signals during initialization
-            if (isPermanentlyBlacklisted(ei->Name)) continue;
+            // Skip blacklisted signals during initialization (row already resolved)
+            if (ei->isBlacklisted) continue;
             
             unsigned long intervalMs = req.frequency * 1000UL;
             
@@ -2568,10 +2571,11 @@ void processAndUpdate(uint32_t can_id, const std::vector<uint8_t> &msg)
         return;
     }
 
-    // Skip permanently blacklisted signals
-    if (isPermanentlyBlacklisted(ei->Name))
+    // Skip permanently blacklisted signals. We already hold the resolved row, so read
+    // its flag directly — a name lookup here would build a std::string for every frame.
+    if (ei->isBlacklisted)
     {
-        return; // Reject before lookup, parsing, formatting, logging
+        return; // Reject before decoding, formatting, logging
     }
 
     updateSensor(*cm, ei, value);

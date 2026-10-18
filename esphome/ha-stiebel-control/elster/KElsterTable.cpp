@@ -31,9 +31,29 @@
 // Bounded: the WPM3 broadcasts many distinct register indices over time; an
 // unbounded cache would grow the heap. Uncached entries simply fall back to the
 // linear search (still correct, just slower).
+//
+// Sizing measured on a WPL10AC (2026-10-18): ~41 published signals and ~45 distinct
+// names — the 256 entries are generous. Note the free heap was 8.6 MB on the
+// ESP32-S3 build (8 MB PSRAM), so the cache RAM only matters on the ESP32-S2 build;
+// the sizes are reported in the 10-minute CONTAINERS log line to keep it observable.
 static std::unordered_map<unsigned short, const ElsterIndex*> indexCache;
 static std::unordered_map<std::string, const ElsterIndex*> nameCache;
 static const size_t MAX_ELSTER_CACHE = 256;
+
+// Reserve once up front: filling the maps would otherwise rehash repeatedly, and every
+// rehash reallocates the bucket array and moves all of its nodes (a visible spike).
+static void reserveElsterCaches()
+{
+  static bool reserved = false;
+  if (reserved) return;
+  reserved = true;
+  indexCache.reserve(MAX_ELSTER_CACHE);
+  nameCache.reserve(MAX_ELSTER_CACHE);
+}
+
+size_t GetElsterIndexCacheSize() { return indexCache.size(); }
+size_t GetElsterNameCacheSize() { return nameCache.size(); }
+size_t GetElsterCacheLimit() { return MAX_ELSTER_CACHE; }
 
 
 void SetValueType(char * Val, size_t ValSize, unsigned char Type, unsigned short Value)
@@ -187,6 +207,8 @@ const char * ElsterTypeToName(unsigned Type)
 
 const ElsterIndex * GetElsterIndex(unsigned short Index)
 {
+  reserveElsterCaches();
+
   // Check cache first - O(1) for subsequent lookups
   auto it = indexCache.find(Index);
   if (it != indexCache.end()) {
@@ -210,6 +232,8 @@ const ElsterIndex * GetElsterIndex(unsigned short Index)
 
 const ElsterIndex * GetElsterIndex(const char* str)
 {
+  reserveElsterCaches();
+
   // Convert to std::string for cache key
   std::string key(str);
   

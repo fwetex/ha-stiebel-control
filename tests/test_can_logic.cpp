@@ -631,6 +631,22 @@ TEST_CASE("processAndUpdate: a register missing from ElsterTable publishes nothi
     CHECK(mqtt_client_instance().messages.empty());
 }
 
+// The hot path reads the resolved row's isBlacklisted flag directly (no name lookup);
+// this pins that a blacklisted register is still rejected.
+TEST_CASE("processAndUpdate: a blacklisted register publishes nothing", "[can]") {
+    resetDiscoveryState();
+
+    const ElsterIndex* junk = GetElsterIndex("TEST_OBJEKT_0");
+    REQUIRE(junk != nullptr);
+    REQUIRE(junk->isBlacklisted);
+
+    std::vector<uint8_t> frame = {0x00, 0x00, 0xFA,
+                                  (uint8_t)(junk->Index >> 8), (uint8_t)(junk->Index & 0xFF),
+                                  0x00, 0x00};
+    processAndUpdate(CanMembers[cm_manager].CanId, frame);
+    CHECK(mqtt_client_instance().messages.empty());
+}
+
 TEST_CASE("publishMqttState: skips empty value", "[mqtt]") {
     resetDiscoveryState();
     const CanMember& mgr = CanMembers[cm_manager];

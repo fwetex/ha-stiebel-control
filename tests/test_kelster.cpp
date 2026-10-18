@@ -165,6 +165,31 @@ TEST_CASE("GetElsterIndex by name: cache hit returns same pointer", "[kelster]")
     CHECK(a == b);
 }
 
+TEST_CASE("Elster caches: bounded, and repeat lookups do not grow them", "[kelster]") {
+    const size_t limit = GetElsterCacheLimit();
+    CHECK(limit > 0);
+
+    const size_t before = GetElsterNameCacheSize();
+    const ElsterIndex* first = GetElsterIndex("HYSTERESEZEIT");
+    REQUIRE(first != nullptr);
+    const size_t afterFirst = GetElsterNameCacheSize();
+    CHECK(afterFirst <= before + 1);        // at most one new entry
+    CHECK(afterFirst <= limit);             // never above the cap
+
+    GetElsterIndex("HYSTERESEZEIT");        // cached: no growth
+    GetElsterIndex("HYSTERESEZEIT");
+    CHECK(GetElsterNameCacheSize() == afterFirst);
+
+    // The index cache behaves the same way (and is reported in the CONTAINERS log)
+    const size_t idxBefore = GetElsterIndexCacheSize();
+    GetElsterIndex(first->Index);
+    const size_t idxAfter = GetElsterIndexCacheSize();
+    GetElsterIndex(first->Index);
+    CHECK(idxAfter <= idxBefore + 1);
+    CHECK(GetElsterIndexCacheSize() == idxAfter);
+    CHECK(idxAfter <= limit);
+}
+
 // ============================================================================
 // GetElsterIndex by index
 // ============================================================================

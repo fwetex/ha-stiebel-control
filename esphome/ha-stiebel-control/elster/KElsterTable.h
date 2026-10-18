@@ -26,6 +26,10 @@
 
   const ElsterIndex * GetElsterIndex(unsigned short Index);
   const ElsterIndex * GetElsterIndex(const char * str);
+  // Diagnostics for the 10-minute CONTAINERS log line (cache sizing / hit coverage).
+  size_t GetElsterIndexCacheSize();
+  size_t GetElsterNameCacheSize();
+  size_t GetElsterCacheLimit();
   ElsterType GetElsterType(const char * str);
   // ValSize is the capacity of Val (including the terminating NUL) — writes are
   // always bounded, so a long decoded string can never overflow the buffer.
