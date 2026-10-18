@@ -412,6 +412,7 @@ static void resetDiscoveryState() {
     discoveredCalculatedSensors.clear();
     discoveredWritableNumbers.clear();
     discoveredWritableSelects.clear();
+    copDiscoveryPublished = false;   // one-shot guard of publishCOPDiscovery()
     mqtt_client_instance().clear();
 }
 
@@ -557,6 +558,42 @@ TEST_CASE("republishAllDiscoveries: keeps the registry, republishes, prunes blac
     // The blacklisted one was pruned from the registry and never advertised
     CHECK(discoveredSignals.count(junkUid) == 0);
     CHECK_FALSE(mqttTopicPublished(junkUid));
+}
+
+// ============================================================================
+// Availability — every entity path must report the device as its availability source
+// ============================================================================
+
+TEST_CASE("discovery: all entity paths carry the availability topic", "[mqtt]") {
+    resetDiscoveryState();
+
+    // raw CAN sensor
+    const ElsterIndex* ei = GetElsterIndex("RAUMSOLLTEMP_I");
+    REQUIRE(ei != nullptr);
+    updateSensor(CanMembers[cm_manager], ei, "19.0");
+    CHECK(mqttFindPayload("homeassistant/sensor/heatingpump/").find("availability_topic") != std::string::npos);
+
+    // calculated sensor
+    resetDiscoveryState();
+    publishCalculatedSensorDiscovery(calculatedSensors[0], true);
+    CHECK(mqttFindPayload("homeassistant/").find("availability_topic") != std::string::npos);
+
+    // writable number
+    resetDiscoveryState();
+    publishWritableNumberDiscovery(writableNumber("WW_SOLL"), true);
+    CHECK(mqttFindPayload("homeassistant/number/").find("availability_topic") != std::string::npos);
+
+    // writable select
+    resetDiscoveryState();
+    publishWritableSelectDiscovery(writableSelects[0], true);
+    CHECK(mqttFindPayload("homeassistant/select/").find("availability_topic") != std::string::npos);
+
+    // COP sensors (three configs)
+    resetDiscoveryState();
+    publishCOPDiscovery();
+    CHECK(mqttFindPayload("cop_ww").find("availability_topic") != std::string::npos);
+    CHECK(mqttFindPayload("cop_heiz").find("availability_topic") != std::string::npos);
+    CHECK(mqttFindPayload("cop_gesamt").find("availability_topic") != std::string::npos);
 }
 
 // ============================================================================

@@ -842,6 +842,12 @@ inline void publishMqttChecked(const std::string &topic, const char* payload, si
     publishMqttChecked(topic.c_str(), payload, len, qos, retain);
 }
 
+// Every entity must carry the device availability topic. Without it Home Assistant shows
+// the entity as available with its last retained value while the device is offline — only
+// the raw-signal path had it, the calculated/number/select/COP paths were missing it.
+// No leading/trailing comma: each call site decides (the JSON before it usually ends in one).
+static const char* const AVAILABILITY_FIELD = "\"availability_topic\":\"heatingpump/status\"";
+
 // Unified function to publish MQTT discovery for calculated sensors
 void publishCalculatedSensorDiscovery(const CalculatedSensorConfig& config, bool forceRepublish = false) {
     // Check if already published (unless force republish)
@@ -900,7 +906,8 @@ void publishCalculatedSensorDiscovery(const CalculatedSensorConfig& config, bool
     }
 
     // Add device info
-    payload << ",\"device\":{\"identifiers\":[\"stiebel_eltron_" HA_DEVICE_MODEL_STR "\"],"
+    payload << "," << AVAILABILITY_FIELD
+            << ",\"device\":{\"identifiers\":[\"stiebel_eltron_" HA_DEVICE_MODEL_STR "\"],"
             << "\"name\":\"Stiebel Eltron Wärmepumpe\","
             << "\"manufacturer\":\"Stiebel Eltron\"}}";
 
@@ -972,7 +979,9 @@ void publishWritableNumberDiscovery(const WritableNumberConfig& config, bool for
             << "\"unit_of_measurement\":\"" << config.unit << "\","
             << "\"device_class\":\"" << config.deviceClass << "\","
             << "\"icon\":\"" << config.icon << "\",";
-    
+
+    payload << AVAILABILITY_FIELD << ",";
+
     // SG Ready controls and explicitly flagged controls go to the main device
     bool isSgReady = (strncmp(config.signalName, "SG_READY_", 9) == 0);
     
@@ -1071,7 +1080,9 @@ void publishWritableSelectDiscovery(const WritableSelectConfig& config, bool for
     if (config.icon && strlen(config.icon) > 0) {
         payload << "\"icon\":\"" << config.icon << "\",";
     }
-    
+
+    payload << AVAILABILITY_FIELD << ",";
+
     // Check if this is an SG Ready control - assign to main device
     bool isSgReady = (strncmp(config.signalName, "SG_READY_", 9) == 0);
     
@@ -1529,10 +1540,11 @@ void publishMqttState(const CanMember &cm, const ElsterIndex *ei, const std::str
 // Track which COP values we have valid data for
 static std::unordered_map<std::string, float> copEnergyValues;
 
-// Publish MQTT discovery for COP sensors
+// Publish MQTT discovery for COP sensors (once per boot). The flag lives at file scope so
+// the test suite can reset it and exercise this path deterministically.
+static bool copDiscoveryPublished = false;
 void publishCOPDiscovery() {
-    static bool discoveryPublished = false;
-    if (discoveryPublished) return;
+    if (copDiscoveryPublished) return;
     
     // COP WW
     {
@@ -1543,6 +1555,7 @@ void publishCOPDiscovery() {
                 << "\"state_topic\":\"heatingpump/calculated/cop_ww/state\","
                 << "\"icon\":\"mdi:water-boiler\","
                 << "\"state_class\":\"measurement\","
+                << AVAILABILITY_FIELD << ","
                 << "\"device\":{\"identifiers\":[\"stiebel_eltron_" HA_DEVICE_MODEL_STR "\"],"
                 << "\"name\":\"Stiebel Eltron Wärmepumpe\","
                 << "\"manufacturer\":\"Stiebel Eltron\"}}";
@@ -1559,6 +1572,7 @@ void publishCOPDiscovery() {
                 << "\"state_topic\":\"heatingpump/calculated/cop_heiz/state\","
                 << "\"icon\":\"mdi:radiator\","
                 << "\"state_class\":\"measurement\","
+                << AVAILABILITY_FIELD << ","
                 << "\"device\":{\"identifiers\":[\"stiebel_eltron_" HA_DEVICE_MODEL_STR "\"],"
                 << "\"name\":\"Stiebel Eltron Wärmepumpe\","
                 << "\"manufacturer\":\"Stiebel Eltron\"}}";
@@ -1575,6 +1589,7 @@ void publishCOPDiscovery() {
                 << "\"state_topic\":\"heatingpump/calculated/cop_gesamt/state\","
                 << "\"icon\":\"mdi:chart-line\","
                 << "\"state_class\":\"measurement\","
+                << AVAILABILITY_FIELD << ","
                 << "\"device\":{\"identifiers\":[\"stiebel_eltron_" HA_DEVICE_MODEL_STR "\"],"
                 << "\"name\":\"Stiebel Eltron Wärmepumpe\","
                 << "\"manufacturer\":\"Stiebel Eltron\"}}";
@@ -1582,7 +1597,7 @@ void publishCOPDiscovery() {
         publishMqttChecked(discoveryTopic, payloadStr.c_str(), payloadStr.length(), 0, true);
     }
     
-    discoveryPublished = true;
+    copDiscoveryPublished = true;
     ESP_LOGI("MQTT", "Discovery published for COP sensors");
 }
 
