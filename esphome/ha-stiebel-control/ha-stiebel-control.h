@@ -340,7 +340,7 @@ static std::set<std::string> discoveredWritableSelects;
 // share a groupId, preserving "only one group member sent per iteration".
 struct PollSlot {
     const CanMember* member;   // concrete poll target
-    const ElsterIndex* signal; // resolved from ElsterTable (never 0xFFFF/blacklisted)
+    const ElsterIndex* signal; // resolved from ElsterTable (never INDEX_NOT_FOUND / blacklisted)
     unsigned long intervalMs;
     unsigned long nextAt;      // runtime: next poll time
     int groupId;               // >0 shared by cm_other fan-out slots; 0 = independent
@@ -539,7 +539,11 @@ const CanMember &lookupCanMember(uint32_t canId)
 // Check if signal is permanently blacklisted (lookup in ElsterTable)
 inline bool isPermanentlyBlacklisted(const char* signalName) {
     const ElsterIndex *ei = GetElsterIndex(signalName);
-    return ei->isBlacklisted;
+    // INDEX_NOT_FOUND (Index 0) is the table's "not found" row, not a verdict about the
+    // name: an unknown name is a caller bug, not a blacklist entry. Conflating the two
+    // made every unknown lookup look blacklisted — which silently emptied the discovery
+    // registry (fixed in c855098) and would silently skip mistyped poll entries.
+    return ei != nullptr && ei->Index != 0 && ei->isBlacklisted;
 }
 
 // Helper: Get type-based defaults for Home Assistant metadata
@@ -722,7 +726,12 @@ void readSignal(const CanMember *cm, const ElsterIndex *ei)
 
 void readSignal(const CanMember *cm, const char *elsterName)
 {
-    readSignal(cm, GetElsterIndex(elsterName));
+    const ElsterIndex* ei = GetElsterIndex(elsterName);
+    if (ei == nullptr || ei->Index == 0) {
+        ESP_LOGW("readSignal()", "Signal \"%s\" not in ElsterTable (index 0) — refusing", elsterName);
+        return;
+    }
+    readSignal(cm, ei);
     return;
 }
 
@@ -802,8 +811,13 @@ void retryPendingCanFrames() {
 
 void writeSignal(const CanMember *cm, const char *elsterName, const char *str)
 {
+    const ElsterIndex* ei = GetElsterIndex(elsterName);
+    if (ei == nullptr || ei->Index == 0) {
+        ESP_LOGW("writeSignal()", "Signal \"%s\" not in ElsterTable (index 0) — refusing to write", elsterName);
+        return;
+    }
     const char* strCopy = str;  // Create a non-const pointer we can pass by reference
-    writeSignal(cm, GetElsterIndex(elsterName), strCopy);
+    writeSignal(cm, ei, strCopy);
     return;
 }
 
@@ -2386,7 +2400,13 @@ void processSignalRequests() {
         for (int i = 0; i < SIGNAL_REQUEST_COUNT; i++) {
             const SignalRequest& req = signalRequests[i];
             const ElsterIndex* ei = GetElsterIndex(req.signalName);
-            if (!ei || ei->Index == 0xFFFF) continue;
+            // INDEX_NOT_FOUND (Index 0) means the name is not in ElsterTable — almost
+            // always a typo in this table. Say so instead of silently polling nothing.
+            if (ei == nullptr || ei->Index == 0) {
+                ESP_LOGW("REQUEST_MGR", "Signal \"%s\" not in ElsterTable (index 0) — check for a typo, skipping",
+                         req.signalName);
+                continue;
+            }
             
             // Skip blacklisted signals during initialization
             if (isPermanentlyBlacklisted(ei->Name)) continue;
@@ -2496,6 +2516,13 @@ void processAndUpdate(uint32_t can_id, const std::vector<uint8_t> &msg)
     // placeholder/unknown values (e.g. WPM3 display FES 0x100, mixer module 2
     // 0x601, redundant DHW duplicates). They fall back to the OTHER member.
     if (cm->CanId == 0x000)
+    {
+        return;
+    }
+
+    // INDEX_NOT_FOUND (Index 0): the frame carries a register that is not in
+    // ElsterTable — there is no entity for it, so neither decode nor publish.
+    if (ei == nullptr || ei->Index == 0)
     {
         return;
     }

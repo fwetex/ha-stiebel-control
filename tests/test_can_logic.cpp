@@ -386,10 +386,11 @@ TEST_CASE("updateCOPCalculations: publishes cop_gesamt when all values present",
 TEST_CASE("isPermanentlyBlacklisted: known non-blacklisted signal returns false", "[can]") {
     CHECK_FALSE(isPermanentlyBlacklisted("HYSTERESEZEIT"));
 }
-TEST_CASE("isPermanentlyBlacklisted: unknown signal returns true (INDEX_NOT_FOUND is blacklisted)", "[can]") {
-    // Unknown name resolves to the INDEX_NOT_FOUND sentinel which has isBlacklisted=true
-    CHECK(isPermanentlyBlacklisted("DOES_NOT_EXIST_XYZ"));
-}
+// NOTE: there used to be a test here asserting that an *unknown* name returns true
+// ("INDEX_NOT_FOUND is blacklisted"). That codified the conflation of "not found" with
+// "blacklisted" and is exactly why the registry-wipe bug (c855098) looked intentional.
+// The correct contract is asserted in
+// "isPermanentlyBlacklisted: unknown names are not blacklisted" below.
 
 using Catch::Approx;
 
@@ -556,6 +557,41 @@ TEST_CASE("republishAllDiscoveries: keeps the registry, republishes, prunes blac
     // The blacklisted one was pruned from the registry and never advertised
     CHECK(discoveredSignals.count(junkUid) == 0);
     CHECK_FALSE(mqttTopicPublished(junkUid));
+}
+
+// ============================================================================
+// "not found" vs "blacklisted" — INDEX_NOT_FOUND is a sentinel, not a verdict
+// ============================================================================
+
+TEST_CASE("isPermanentlyBlacklisted: unknown names are not blacklisted", "[can]") {
+    // INDEX_NOT_FOUND (Index 0) answers for unknown names. Treating that as a blacklist
+    // verdict silently skipped mistyped signals and emptied the registry before c855098.
+    CHECK_FALSE(isPermanentlyBlacklisted("DOES_NOT_EXIST"));
+    CHECK_FALSE(isPermanentlyBlacklisted("RAUMSOLLTEMP_I"));
+    CHECK(isPermanentlyBlacklisted("TEST_OBJEKT_0"));
+}
+
+TEST_CASE("readSignal/writeSignal: unknown signal names are refused, not sent", "[can]") {
+    fake_can().sent.clear();
+    readSignal(&CanMembers[cm_manager], "DOES_NOT_EXIST");
+    writeSignal(&CanMembers[cm_manager], "DOES_NOT_EXIST", "20.0");
+    CHECK(fake_can().sent.empty());
+}
+
+TEST_CASE("processAndUpdate: a register missing from ElsterTable publishes nothing", "[can]") {
+    resetDiscoveryState();
+
+    // Find an index the table does not know (a miss reports Index 0)
+    unsigned short unknownIdx = 0x0001;
+    while (unknownIdx < 0xFFFF && GetElsterIndex(unknownIdx)->Index != 0) unknownIdx++;
+    REQUIRE(GetElsterIndex(unknownIdx)->Index == 0);
+
+    // 0xFA frame format: index in msg[3] (high) / msg[4] (low)
+    std::vector<uint8_t> frame = {0x00, 0x00, 0xFA,
+                                  (uint8_t)(unknownIdx >> 8), (uint8_t)(unknownIdx & 0xFF),
+                                  0x00, 0x00};
+    processAndUpdate(CanMembers[cm_manager].CanId, frame);
+    CHECK(mqtt_client_instance().messages.empty());
 }
 
 TEST_CASE("publishMqttState: skips empty value", "[mqtt]") {
