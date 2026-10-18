@@ -1449,49 +1449,46 @@ void publishMqttDiscovery(const CanMember &cm, const ElsterIndex *ei) {
     ESP_LOGI("MQTT", "Discovery published for %s", friendlyName);
 }
 
-// Republish all MQTT discoveries (for periodic refresh)
+// Republish all MQTT discoveries (periodic refresh + prune blacklisted registers).
+//
+// Discovery configs are retained, so re-publishing one is idempotent and needs no CAN
+// traffic. Publish them directly from uidCache, which knows the exact (member, signal)
+// pair of every entity — never recover that by parsing the uid string: the format is
+// `stiebel_<member>_<signal>` and both parts contain underscores. The previous
+// implementation split on the last '_', so every name resolved to INDEX_NOT_FOUND (a
+// blacklisted row) and discoveredSignals was emptied on every refresh.
+//
+// Pruning keeps discoveredSignals a lifetime registry, so MAX_PUBLISHED_SIGNALS really
+// bounds the number of distinct entities instead of resetting every 15 minutes.
 void republishAllDiscoveries() {
     ESP_LOGI("MQTT", "Republishing all MQTT discoveries (%d signals)", discoveredSignals.size());
-    
-    // Create a copy of discovered signals to iterate over, filtering out blacklisted signals
-    std::set<std::string> signalsToRepublish;
-    int blacklistedCount = 0;
-    
-    for (const auto& uid : discoveredSignals) {
-        // Extract signal name from UID (format: "can_id_signalName")
-        // Find last underscore to get signal name
-        size_t lastUnderscore = uid.find_last_of('_');
-        if (lastUnderscore != std::string::npos) {
-            std::string signalName = uid.substr(lastUnderscore + 1);
-            
-            // Skip blacklisted signals
-            if (isPermanentlyBlacklisted(signalName.c_str())) {
-                blacklistedCount++;
-                ESP_LOGD("MQTT", "Skipping blacklisted signal during republish: %s", signalName.c_str());
-                continue;
-            }
+
+    size_t republished = 0;
+    size_t pruned = 0;
+    for (const auto& entry : uidCache) {
+        const ElsterIndex* ei = GetElsterIndex(entry.first.signal);
+        const std::string& uid = entry.second;
+
+        // Register no longer in the table, or blacklisted since it was published:
+        // stop advertising the entity and drop it from the registry.
+        if (ei == nullptr || ei->Index == 0 || isPermanentlyBlacklisted(ei->Name)) {
+            pruned += discoveredSignals.erase(uid);
+            continue;
         }
-        
-        signalsToRepublish.insert(uid);
+
+        publishMqttDiscovery(lookupCanMember(entry.first.canId), ei);
+        republished++;
     }
-    
-    if (blacklistedCount > 0) {
-        ESP_LOGI("MQTT", "Filtered out %d blacklisted signals during republish", blacklistedCount);
+
+    if (pruned > 0) {
+        ESP_LOGI("MQTT", "Pruned %u blacklisted signal(s) from the discovery registry", (unsigned)pruned);
     }
-    
-    // Clear the set and re-add only non-blacklisted signals
-    discoveredSignals = signalsToRepublish;
-    
-    // Force republish by reading all known signals
-    // This will trigger processAndUpdate which calls publishMqttDiscovery
-    for (const auto& signal : signalsToRepublish) {
-        ESP_LOGD("MQTT", "Marked for republish: %s", signal.c_str());
-    }
-    
+    ESP_LOGI("MQTT", "Republished %u signal discoveries", (unsigned)republished);
+
     // Republish all calculated sensor discoveries using unified system
     publishAllCalculatedSensorDiscoveries(true);
-    
-    ESP_LOGI("MQTT", "Discovery refresh complete - will republish as signals are received");
+
+    ESP_LOGI("MQTT", "Discovery refresh complete");
 }
 
 // Publish signal state to MQTT

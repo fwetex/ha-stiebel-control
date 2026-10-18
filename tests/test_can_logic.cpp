@@ -512,6 +512,52 @@ TEST_CASE("sentinel value: an unknown signal creates no entity", "[mqtt]") {
     CHECK(mqtt_client_instance().messages.empty());
 }
 
+// ============================================================================
+// republishAllDiscoveries — the registry must survive a refresh
+// ============================================================================
+
+TEST_CASE("republishAllDiscoveries: keeps the registry, republishes, prunes blacklisted", "[mqtt]") {
+    resetDiscoveryState();
+    uidCache.clear();
+
+    const ElsterIndex* raum  = GetElsterIndex("RAUMSOLLTEMP_I");
+    const ElsterIndex* kessel = GetElsterIndex("KESSELSOLLTEMP");
+    REQUIRE(raum != nullptr);
+    REQUIRE(kessel != nullptr);
+
+    // Two published entities
+    updateSensor(CanMembers[cm_manager], raum, "19.0");
+    updateSensor(CanMembers[cm_manager], kessel, "17.0");
+    REQUIRE(discoveredSignals.size() == 2);
+    const std::string raumUid  = getOrCreateUID(CanMembers[cm_manager], raum->Name);
+    const std::string kesselUid = getOrCreateUID(CanMembers[cm_manager], kessel->Name);
+
+    // Simulate an entity published *before* its register was blacklisted
+    const ElsterIndex* junk = GetElsterIndex("TEST_OBJEKT_0");
+    REQUIRE(junk != nullptr);
+    REQUIRE(junk->isBlacklisted);
+    const std::string junkUid = "stiebel_kessel_test_objekt_0";
+    uidCache[UidKey{CanMembers[cm_kessel].CanId, junk->Name}] = junkUid;
+    discoveredSignals.insert(junkUid);
+    REQUIRE(discoveredSignals.size() == 3);
+
+    mqtt_client_instance().clear();
+    republishAllDiscoveries();
+
+    // The live entities are still tracked — the old implementation emptied the set here
+    CHECK(discoveredSignals.size() == 2);
+    CHECK(discoveredSignals.count(raumUid) == 1);
+    CHECK(discoveredSignals.count(kesselUid) == 1);
+
+    // …and their discovery configs were actually re-published
+    CHECK(mqttTopicPublished("heatingpump/" + raumUid));
+    CHECK(mqttTopicPublished("heatingpump/" + kesselUid));
+
+    // The blacklisted one was pruned from the registry and never advertised
+    CHECK(discoveredSignals.count(junkUid) == 0);
+    CHECK_FALSE(mqttTopicPublished(junkUid));
+}
+
 TEST_CASE("publishMqttState: skips empty value", "[mqtt]") {
     resetDiscoveryState();
     const CanMember& mgr = CanMembers[cm_manager];
