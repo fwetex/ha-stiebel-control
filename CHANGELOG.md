@@ -62,6 +62,13 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions: [Sem
   means a legitimate long boost from the control source is no longer cut off after 3 h — at the cost
   of a genuinely stuck boost persisting up to 12 h.
 
+- **Redundant register writes are suppressed.** A command that repeats the value a register already
+  holds now costs **zero** CAN frames instead of two (write + read-back). This covers Home Assistant
+  re-sending setpoints (automation/template re-evaluation, HA restart), a control source repeating the
+  same SG Ready state, and the unchanged half of `DATETIME/set`. The baseline also follows received
+  values, so a change made at the panel is still honoured. The 10-minute CONTAINERS line reports
+  `writes=… skipped=…`, and the boost state in NVS is only rewritten when it actually changed.
+
 ### Removed
 
 - The `EINSTELL_SPEICHERSOLLTEMP` number entity and `/set` topic — use `WW_SOLL` instead.

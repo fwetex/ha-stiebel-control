@@ -78,6 +78,13 @@ struct FakeIO : ISgReadyIO {
         return false;
     }
 
+    int countSave() const {
+        int n = 0;
+        for (auto& c : calls)
+            if (c.type == "save") n++;
+        return n;
+    }
+
     int countCan(const std::string& signal) const {
         int n = 0;
         for (auto& c : calls)
@@ -535,6 +542,23 @@ TEST_CASE("loadFromNvs: a standby that survived a reboot stays a standby", "[sg_
     // restored standby must never be auto-terminated
     CHECK_FALSE(rebooted.watchdogShouldRecover(
         10 * SgReadyController::SG_READY_WATCHDOG_MS, 0));
+}
+
+TEST_CASE("persistState: an unchanged state is not written to NVS again", "[sg_ready]") {
+    FakeIO io;
+    SgReadyController ctrl(io);
+
+    ctrl.applyState(SgReadyController::STATE_RECOMMENDED);
+    const int afterFirst = io.countSave();
+    REQUIRE(afterFirst == 1);
+
+    // A control source re-sending the same state must not wear the flash
+    ctrl.applyState(SgReadyController::STATE_RECOMMENDED);
+    CHECK(io.countSave() == afterFirst);
+
+    // A real change is persisted
+    ctrl.applyState(SgReadyController::STATE_NORMAL);
+    CHECK(io.countSave() == afterFirst + 1);
 }
 
 TEST_CASE("loadFromNvs: an out-of-range persisted state is ignored", "[sg_ready]") {

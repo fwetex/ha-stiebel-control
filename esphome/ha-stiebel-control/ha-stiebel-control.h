@@ -407,6 +407,17 @@ struct UidKeyHash {
 };
 static std::unordered_map<UidKey, std::string, UidKeyHash> uidCache;
 
+// Last known value per (member, signal), used to suppress redundant register writes.
+// Updated from two directions: every successful write, and every received value (a
+// broadcast or read-back) for keys already tracked — the latter keeps a panel-side change
+// from being masked, and costs no allocation because unknown keys are ignored here.
+// Only signals we have written at least once are tracked, so this stays tiny (~10 entries).
+static std::unordered_map<UidKey, std::string, UidKeyHash> lastSignalValue;
+
+// Diagnostics: CAN write frames actually sent vs. suppressed as redundant (CONTAINERS log).
+static uint32_t canWriteCount = 0;
+static uint32_t canWriteSkippedCount = 0;
+
 // Hard cap on distinct published signals. The WPM3 broadcasts many service
 // registers over time (TEST_OBJEKT, ESTRICH_*, BIVALENZ*, …); each would
 // otherwise add a permanent uid + HA entity and grow the heap in steps.
@@ -821,16 +832,37 @@ void retryPendingCanFrames() {
     }
 }
 
-void writeSignal(const CanMember *cm, const char *elsterName, const char *str)
+bool writeSignal(const CanMember *cm, const char *elsterName, const char *str)
 {
     const ElsterIndex* ei = GetElsterIndex(elsterName);
     if (ei == nullptr || ei->Index == 0) {
         ESP_LOGW("writeSignal()", "Signal \"%s\" not in ElsterTable (index 0) — refusing to write", elsterName);
-        return;
+        return false;
     }
+
+    // Suppress redundant writes: a command that repeats the value the register already holds
+    // would cost two CAN frames (write + read-back) for nothing. This is the common case when
+    // HA re-sends setpoints (automation/template re-evaluation, HA restart) or when only part
+    // of a burst changed (e.g. the date half of a DATETIME/set, or a repeated SG Ready state).
+    // The baseline also follows received values, so a change made at the panel is honoured.
+    // Deferred retries call the (member, ei) overload and therefore bypass this check.
+    if (str != nullptr) {
+        const UidKey key{cm->CanId, ei->Name};
+        auto tracked = lastSignalValue.find(key);
+        if (tracked != lastSignalValue.end() && tracked->second == str) {
+            canWriteSkippedCount++;
+            ESP_LOGD("writeSignal()", "Skipping redundant write of %s = \"%s\"", ei->Name, str);
+            return false;
+        }
+        // Tracked now, so the following read-back/broadcast can keep it current. Set before
+        // the send: a frame parked in the deferral queue will still be transmitted.
+        lastSignalValue[key] = str;
+    }
+
+    canWriteCount++;
     const char* strCopy = str;  // Create a non-const pointer we can pass by reference
     writeSignal(cm, ei, strCopy);
-    return;
+    return true;
 }
 
 // Publish to MQTT with throttled failure logging. A failed publish (e.g. broker
@@ -1736,8 +1768,11 @@ inline void writeCanSignalRouted(const char* signalName, const char* value) {
         float v = strtof(value, &endPtr);
         if (endPtr != value && *endPtr == '\0') lastEinstellSollTemp = v;
     }
-    writeSignal(member, signalName, value);
-    readSignal(member, signalName);
+    // Only read back when something was actually written: a suppressed (identical) write
+    // also makes the read-back pointless, and this halves the burst for redundant commands.
+    if (writeSignal(member, signalName, value)) {
+        readSignal(member, signalName);
+    }
 }
 
 // Write the DHW (WW) setpoint to every Einstell register this model needs.
@@ -2016,6 +2051,13 @@ void publishSignalUnavailable(const CanMember &cm, const ElsterIndex *ei) {
 
 void updateSensor(const CanMember &cm, const ElsterIndex *ei, const std::string &value)
 {
+    // Keep the write-suppression baseline current. Only keys we have written once are
+    // tracked, so this costs no allocation on the receive path.
+    if (ei != nullptr && ei->Name != nullptr && !value.empty()) {
+        auto tracked = lastSignalValue.find(UidKey{cm.CanId, ei->Name});
+        if (tracked != lastSignalValue.end()) tracked->second = value;
+    }
+
     // Skip empty values
     if (value.empty()) {
         return;
@@ -2398,11 +2440,12 @@ void processSignalRequests() {
     if (now - lastContainerLog > 600000U) {
         lastContainerLog = now;
         ESP_LOGI("CONTAINERS", "uidCache=%zu discoveredSignals=%zu/%u pollSlots=%zu copEnergy=%zu "
-                 "idxCache=%zu/%zu nameCache=%zu/%zu freeHeap=%u minFreeHeap=%u",
+                 "idxCache=%zu/%zu nameCache=%zu/%zu writes=%u skipped=%u freeHeap=%u minFreeHeap=%u",
                  (size_t)uidCache.size(), (size_t)discoveredSignals.size(), (unsigned)MAX_PUBLISHED_SIGNALS,
                  (size_t)pollSlots.size(), (size_t)copEnergyValues.size(),
                  GetElsterIndexCacheSize(), GetElsterCacheLimit(),
                  GetElsterNameCacheSize(), GetElsterCacheLimit(),
+                 (unsigned)canWriteCount, (unsigned)canWriteSkippedCount,
                  (unsigned)diagFreeHeap(), (unsigned)diagMinFreeHeap());
     }
 

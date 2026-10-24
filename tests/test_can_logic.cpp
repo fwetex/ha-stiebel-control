@@ -1278,6 +1278,7 @@ TEST_CASE("i18n: programmschalterOptions match BetriebsartList protocol strings"
 
 TEST_CASE("writeSignal: et_betriebsart with unrecognized string is not sent to CAN bus", "[can]") {
     fake_can().sent.clear();
+    lastSignalValue.clear();
     const char* value = "Bogus Value";
     writeSignal(&CanMembers[cm_manager], "PROGRAMMSCHALTER", value);
     CHECK(fake_can().sent.empty());
@@ -1285,6 +1286,7 @@ TEST_CASE("writeSignal: et_betriebsart with unrecognized string is not sent to C
 
 TEST_CASE("writeSignal: et_betriebsart with valid German string is sent", "[can]") {
     fake_can().sent.clear();
+    lastSignalValue.clear();
     const char* value = "Automatik";
     writeSignal(&CanMembers[cm_manager], "PROGRAMMSCHALTER", value);
     CHECK(fake_can().sent.size() == 1);
@@ -1293,6 +1295,70 @@ TEST_CASE("writeSignal: et_betriebsart with valid German string is sent", "[can]
 TEST_CASE("i18n: sgReadyOptions contains 4 non-empty entries", "[i18n]") {
     for (size_t i = 0; i < 4; ++i)
         CHECK(std::string(sgReadyOptions[i]).length() > 0);
+}
+
+// ============================================================================
+// Redundant register writes — a repeated command must cost zero CAN frames
+// ============================================================================
+
+TEST_CASE("writeSignal: identical writes are suppressed, changed values go out", "[can]") {
+    lastSignalValue.clear();
+    fake_can().sent.clear();
+    const uint32_t writesBefore = canWriteCount;
+    const uint32_t skippedBefore = canWriteSkippedCount;
+
+    writeSignal(&CanMembers[cm_manager], "RAUMSOLLTEMP_I", "21.0");
+    CHECK(fake_can().sent.size() == 1);
+    CHECK(canWriteCount - writesBefore == 1);
+
+    writeSignal(&CanMembers[cm_manager], "RAUMSOLLTEMP_I", "21.0");   // redundant
+    CHECK(fake_can().sent.size() == 1);
+    CHECK(canWriteSkippedCount - skippedBefore == 1);
+
+    writeSignal(&CanMembers[cm_manager], "RAUMSOLLTEMP_I", "22.0");   // real change
+    CHECK(fake_can().sent.size() == 2);
+    CHECK(canWriteCount - writesBefore == 2);
+}
+
+TEST_CASE("writeSignal: a received value resets the suppression baseline", "[can]") {
+    lastSignalValue.clear();
+    fake_can().sent.clear();
+    const ElsterIndex* ei = GetElsterIndex("RAUMSOLLTEMP_I");
+    REQUIRE(ei != nullptr);
+
+    writeSignal(&CanMembers[cm_manager], "RAUMSOLLTEMP_I", "21.0");
+
+    // Someone changed it at the panel: the broadcast updates the baseline …
+    updateSensor(CanMembers[cm_manager], ei, "18.0");
+
+    fake_can().sent.clear();
+    writeSignal(&CanMembers[cm_manager], "RAUMSOLLTEMP_I", "21.0");   // … so this must go out
+    CHECK(fake_can().sent.size() == 1);
+}
+
+TEST_CASE("writeSignal: a deferred retry bypasses the suppression", "[can]") {
+    lastSignalValue.clear();
+    pendingCanFrames.clear();
+    fake_can().sent.clear();
+
+    const ElsterIndex* ei = GetElsterIndex("RAUMSOLLTEMP_I");
+    REQUIRE(ei != nullptr);
+    const char* value = "21.0";
+
+    // Baseline already equals the value (as if it had just been written) …
+    lastSignalValue[UidKey{CanMembers[cm_manager].CanId, ei->Name}] = value;
+
+    // … and a write for it is parked in the deferral queue
+    PendingCanFrame p;
+    p.member = &CanMembers[cm_manager];
+    p.signal = ei;
+    p.isWrite = true;
+    snprintf(p.value, sizeof(p.value), "%s", value);
+    pendingCanFrames.push_back(p);
+
+    retryPendingCanFrames();   // runs through the (member, ei) overload, bypassing the check
+    CHECK(fake_can().sent.size() == 1);
+    CHECK(pendingCanFrames.empty());
 }
 
 TEST_CASE("i18n: all calculatedSensors names are non-empty", "[i18n]") {
@@ -1499,10 +1565,13 @@ TEST_CASE("CAN TX: frames the driver refuses are deferred and retried", "[can]")
     fake_can().tx_slots = 3;   // MCP2515: three TX buffers, then busy
     fake_can().drain();
     pendingCanFrames.clear();
+    lastSignalValue.clear();   // distinct values below, but keep the baseline deterministic
 
     // Three write+read pairs — the tail of an SG Ready burst (6 frames)
     for (int i = 0; i < 3; i++) {
-        writeCanSignalRouted("RAUMSOLLTEMP_I", "25.0");
+        char v[8];
+        snprintf(v, sizeof(v), "%d.0", 25 + i);   // distinct, or the dedupe would skip them
+        writeCanSignalRouted("RAUMSOLLTEMP_I", v);
     }
     CHECK(fake_can().sent.size() == 3);      // only what the buffers could take
     CHECK(pendingCanFrames.size() == 3);     // the rest are parked, not lost
@@ -1523,9 +1592,12 @@ TEST_CASE("CAN TX: a deep TX queue never defers", "[can]") {
     fake_can().tx_slots = 0;   // unlimited, like tx_queue_len: 64
     fake_can().drain();
     pendingCanFrames.clear();
+    lastSignalValue.clear();
 
     for (int i = 0; i < 10; i++) {
-        writeCanSignalRouted("RAUMSOLLTEMP_I", "25.0");
+        char v[8];
+        snprintf(v, sizeof(v), "%d.0", 25 + i);   // distinct values
+        writeCanSignalRouted("RAUMSOLLTEMP_I", v);
     }
     CHECK(fake_can().sent.size() == 20);     // 10 write+read pairs, none refused
     CHECK(pendingCanFrames.empty());

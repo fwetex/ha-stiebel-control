@@ -119,6 +119,13 @@ public:
         bool  active          = false;
         float originalDhwTemp = 0.0f;
         float originalRoomTemp = 0.0f;
+        // Last values written to NVS, so persistState() can skip unchanged writes (a control
+        // source re-sending the same state would otherwise wear the flash for nothing).
+        bool  nvsValid        = false;
+        float nvsDhw          = 0.0f;
+        float nvsRoom         = 0.0f;
+        bool  nvsActive       = false;
+        int   nvsState        = 0;
     };
 
     explicit SgReadyController(ISgReadyIO& io) : io_(io) {}
@@ -290,8 +297,23 @@ private:
     }
 
     void persistState() {
+        // Skip the NVS write when nothing changed. Every state application persists four
+        // preferences; a repeated command (HA re-sending the same state) would otherwise cost
+        // flash wear without changing anything.
+        if (state_.nvsValid &&
+            state_.nvsDhw == state_.originalDhwTemp &&
+            state_.nvsRoom == state_.originalRoomTemp &&
+            state_.nvsActive == state_.active &&
+            state_.nvsState == state_.currentState) {
+            return;
+        }
         io_.saveBoostState(state_.originalDhwTemp, state_.originalRoomTemp, state_.active,
                            state_.currentState);
+        state_.nvsValid = true;
+        state_.nvsDhw = state_.originalDhwTemp;
+        state_.nvsRoom = state_.originalRoomTemp;
+        state_.nvsActive = state_.active;
+        state_.nvsState = state_.currentState;
     }
 
     void applyEvuLock() {
