@@ -81,6 +81,14 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions: [Sem
 
 ### Fixed
 
+- **EVU lock (SG Ready state 1) did nothing on the WPL 10 AC.** `applyEvuLock()` wrote the literal
+  operating mode `"Bereitschaft"` — the WPM2 label. On a WPM3 (WPL 10 AC) build the table calls
+  that mode `"Bereitschaftsbetrieb"`, so `TranslateString()` returned -1 and `writeSignal()`
+  refused the frame: Home Assistant and NVS reported state 1 while the heat pump stayed in
+  `Komfortbetrieb`. The same applied to every mode restore. The controller now passes a
+  `BetriebsartList` **index** (`MODE_STANDBY`/`MODE_COMFORT`) and the IO adapter resolves the
+  label from the compiled model's table, so a model-specific name can no longer drift. The native
+  test build uses the WPM2 table, which is why the suite stayed green before.
 - **CAN frames were silently dropped on the ESP32-S2 / MCP2515 build.** That driver refuses
   frames when its three TX buffers are busy (`ERROR_ALLTXBUSY`) instead of queueing them, and the
   return value was ignored — an SG Ready state change issues up to 8 frames from a single lambda,

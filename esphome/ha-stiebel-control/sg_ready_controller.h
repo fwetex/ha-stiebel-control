@@ -13,14 +13,6 @@
 #include <cstring>
 #include <cstdint>
 
-// Operating mode written by SG Ready when boosting back to normal operation.
-// The WPM3 (WPL 10 AC) calls this mode "Komfortbetrieb", older WPM2 "Tagbetrieb".
-#ifdef HA_MODEL_wpl10ac
-#define SG_READY_NORMAL_MODE "Komfortbetrieb"
-#else
-#define SG_READY_NORMAL_MODE "Tagbetrieb"
-#endif
-
 // SG Ready watchdog window, in MINUTES — overridable per installation via the
 // `sg_ready_watchdog_min` substitution (build flag HA_SG_READY_WATCHDOG_MIN).
 // 720 = 12 h (production default); a small value such as 3 makes the watchdog
@@ -50,8 +42,20 @@ class ISgReadyIO {
 public:
     virtual ~ISgReadyIO() = default;
 
-    // Write a CAN signal value (e.g. "PROGRAMMSCHALTER" = "Tagbetrieb")
+    // Write a CAN signal value (e.g. "RAUMSOLLTEMP_I" = "21.0")
     virtual void writeCanSignal(const char* signalName, const char* value) = 0;
+
+    // Set the heat pump's operating mode by index into the model's
+    // BetriebsartList (ElsterTable.h):
+    //   0 Notbetrieb, 1 Bereitschaft, 2 Programmierbetrieb,
+    //   3 Komfort, 4 Eco, 5 Warmwasser.
+    // The label is MODEL-SPECIFIC — the WPM3 (WPL 10 AC) calls mode 1
+    // "Bereitschaftsbetrieb", older WPM2 "Bereitschaft", and mode 3
+    // "Komfortbetrieb" vs. "Tagbetrieb". The controller must therefore never
+    // hard-code a label; resolving the index is the IO layer's job. (A literal
+    // WPM2 name on a WPM3 build is refused by TranslateString(), so the write
+    // silently never reaches the bus.)
+    virtual void writeOperatingMode(int mode) = 0;
 
     // Publish a value to an MQTT state topic
     virtual void publishMqtt(const char* topic, const char* value) = 0;
@@ -87,6 +91,11 @@ public:
     static constexpr int STATE_NORMAL    = 2;
     static constexpr int STATE_RECOMMENDED = 3;
     static constexpr int STATE_FORCED    = 4;
+
+    // BetriebsartList indices used by SG Ready (model-independent — the label
+    // behind them differs between WPM2 and WPM3, see writeOperatingMode()).
+    static constexpr int MODE_STANDBY = 1;   // EVU lock
+    static constexpr int MODE_COMFORT = 3;   // normal operation / boost
 
     // Default setpoint fallbacks (used when originals were never captured)
     static constexpr float DEFAULT_DHW_TEMP  = 48.0f;
@@ -321,14 +330,14 @@ private:
         restoreRoom();
         state_.active = true;
         persistState();
-        io_.writeCanSignal("PROGRAMMSCHALTER", "Bereitschaft");
+        io_.writeOperatingMode(MODE_STANDBY);
     }
 
     void applyNormal() {
         if (state_.active) {
             restoreDhw();
             restoreRoom();
-            io_.writeCanSignal("PROGRAMMSCHALTER", SG_READY_NORMAL_MODE);
+            io_.writeOperatingMode(MODE_COMFORT);
             state_.active = false;
             persistState();
         }
@@ -339,7 +348,7 @@ private:
         state_.active = true;
         persistState();
 
-        io_.writeCanSignal("PROGRAMMSCHALTER", SG_READY_NORMAL_MODE);
+        io_.writeOperatingMode(MODE_COMFORT);
 
         if (config_.boostState3 > 0.1f) {
             float boosted = state_.originalDhwTemp + config_.boostState3;
@@ -363,7 +372,7 @@ private:
         state_.active = true;
         persistState();
 
-        io_.writeCanSignal("PROGRAMMSCHALTER", SG_READY_NORMAL_MODE);
+        io_.writeOperatingMode(MODE_COMFORT);
 
         if (config_.boostState4 > 0.1f) {
             float boosted = state_.originalDhwTemp + config_.boostState4;

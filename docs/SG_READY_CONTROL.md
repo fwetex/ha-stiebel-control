@@ -29,6 +29,12 @@ HA-Monitor (scharfer Watchdog) ──MQTT──▶  select.heatingpump_sg_ready_
 | `3` boost | `3 - Empfohlen` | Komfort + `SPEICHERSOLLTEMP` +`BOOST_STATE3` |
 | (optional statt 3) | `4 - Zwang` | Komfort + stärkerer WW-/Raum-Boost (`BOOST_STATE4`) |
 
+Die Betriebsart wird über einen Index aus `BetriebsartList` geschrieben, nicht über einen
+festen Text: WPM3 (WPL 10 AC) nennt Modus 1 `Bereitschaftsbetrieb` und Modus 3
+`Komfortbetrieb`, WPM2 `Bereitschaft` bzw. `Tagbetrieb`. Die Firmware löst den Namen aus der
+Tabelle des jeweils gebauten Modells auf — ein modellfremder Name würde von
+`TranslateString()` verworfen und der Write käme nie auf den CAN-Bus.
+
 Boost-Stärke (via HA-Number/`/set`):
 `heatingpump/MANAGER/SG_READY_BOOST_STATE3/set` (z.B. `5.0`), `..._STATE4/set` (z.B. `8.0`).
 

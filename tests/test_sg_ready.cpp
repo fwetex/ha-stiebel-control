@@ -30,6 +30,10 @@ struct FakeIO : ISgReadyIO {
         calls.push_back({"can", signal, value});
     }
 
+    void writeOperatingMode(int mode) override {
+        calls.push_back({"mode", std::to_string(mode), ""});
+    }
+
     void publishMqtt(const char* topic, const char* value) override {
         calls.push_back({"mqtt", topic, value});
     }
@@ -69,6 +73,20 @@ struct FakeIO : ISgReadyIO {
             if (c.type == "can" && c.key == signal && (value.empty() || c.value == value))
                 return true;
         return false;
+    }
+
+    bool hadMode(int mode) const {
+        for (auto& c : calls)
+            if (c.type == "mode" && c.key == std::to_string(mode))
+                return true;
+        return false;
+    }
+
+    int countMode(int mode) const {
+        int n = 0;
+        for (auto& c : calls)
+            if (c.type == "mode" && c.key == std::to_string(mode)) n++;
+        return n;
     }
 
     bool hadMqtt(const std::string& value) const {
@@ -134,7 +152,7 @@ TEST_CASE("applyState rejects invalid states", "[sg_ready]") {
     CHECK(io.calls.empty());
 }
 
-TEST_CASE("state 1 (EVU Lock): sets Bereitschaft, does not restore if not active", "[sg_ready]") {
+TEST_CASE("state 1 (EVU Lock): selects standby mode, does not restore if not active", "[sg_ready]") {
     FakeIO io;
     SgReadyController ctrl(io);
 
@@ -142,7 +160,7 @@ TEST_CASE("state 1 (EVU Lock): sets Bereitschaft, does not restore if not active
 
     CHECK(ctrl.currentState() == 1);
     CHECK(ctrl.isActive() == true);
-    CHECK(io.hadCan("PROGRAMMSCHALTER", "Bereitschaft"));
+    CHECK(io.hadMode(SgReadyController::MODE_STANDBY));
     // No restore calls because sgReadyActive was false and originalDhw/Room are 0
     CHECK(io.countCan("EINSTELL_SPEICHERSOLLTEMP") == 0);
     CHECK(io.countCan("RAUMSOLLTEMP_I") == 0);
@@ -157,7 +175,7 @@ TEST_CASE("state 2 (Normal): no-op when not active", "[sg_ready]") {
 
     CHECK(ctrl.isActive() == false);
     // With no active boost, should not write any CAN signals
-    CHECK(io.countCan("PROGRAMMSCHALTER") == 0);
+    CHECK(io.countMode(SgReadyController::MODE_STANDBY) == 0);
     CHECK(io.hadMqtt("2 - Normal"));
 }
 
@@ -169,7 +187,7 @@ TEST_CASE("state 3 (Recommended): boosts DHW and room temp", "[sg_ready]") {
     ctrl.applyState(SgReadyController::STATE_RECOMMENDED);
 
     CHECK(ctrl.isActive() == true);
-    CHECK(io.hadCan("PROGRAMMSCHALTER", "Tagbetrieb"));
+    CHECK(io.hadMode(SgReadyController::MODE_COMFORT));
     // DHW: 48.0 + 5.0 = 53.0
     CHECK(io.lastCan("EINSTELL_SPEICHERSOLLTEMP") == "53.0");
     // Room: 20.0 + 1.0 = 21.0
@@ -185,7 +203,7 @@ TEST_CASE("state 4 (Forced): boosts DHW and room temp more", "[sg_ready]") {
     ctrl.applyState(SgReadyController::STATE_FORCED);
 
     CHECK(ctrl.isActive() == true);
-    CHECK(io.hadCan("PROGRAMMSCHALTER", "Tagbetrieb"));
+    CHECK(io.hadMode(SgReadyController::MODE_COMFORT));
     // DHW: 48.0 + 8.0 = 56.0
     CHECK(io.lastCan("EINSTELL_SPEICHERSOLLTEMP") == "56.0");
     // Room: 20.0 + 2.0 = 22.0
@@ -284,7 +302,7 @@ TEST_CASE("state 3 → state 2: restores original DHW and room temps", "[sg_read
     CHECK(io.lastCan("EINSTELL_SPEICHERSOLLTEMP") == "48.0");
     // Should restore room to 20.0
     CHECK(io.lastCan("RAUMSOLLTEMP_I") == "20.0");
-    CHECK(io.hadCan("PROGRAMMSCHALTER", "Tagbetrieb"));
+    CHECK(io.hadMode(SgReadyController::MODE_COMFORT));
     CHECK(ctrl.isActive() == false);
 }
 
@@ -358,7 +376,7 @@ TEST_CASE("state 1 → state 2: restores temps if active", "[sg_ready]") {
     // Now back to normal — state was EVU lock, active=true, but originals already cleared
     // EVU lock already restored temps; state 2 should still run Tagbetrieb
     ctrl.applyState(SgReadyController::STATE_NORMAL);
-    CHECK(io.hadCan("PROGRAMMSCHALTER", "Tagbetrieb"));
+    CHECK(io.hadMode(SgReadyController::MODE_COMFORT));
     CHECK(ctrl.isActive() == false);
 }
 
@@ -440,7 +458,7 @@ TEST_CASE("state 3 with zero boost: skips DHW write", "[sg_ready]") {
     ctrl.applyState(SgReadyController::STATE_RECOMMENDED);
 
     CHECK(io.countCan("EINSTELL_SPEICHERSOLLTEMP") == 0);
-    CHECK(io.hadCan("PROGRAMMSCHALTER", "Tagbetrieb"));  // mode still set
+    CHECK(io.hadMode(SgReadyController::MODE_COMFORT));  // mode still set
 }
 
 TEST_CASE("boost state is persisted after state 3", "[sg_ready]") {

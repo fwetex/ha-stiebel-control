@@ -108,7 +108,7 @@ TEC/REC above 96 indicates warning level; above 127 the controller enters bus-of
 
 | Entity ID | Options |
 |-----------|---------|
-| `select.manager_programmschalter` | Notbetrieb, Bereitschaft, Automatik, Tagbetrieb, Absenkbetrieb, Warmwasser |
+| `select.manager_programmschalter` | Model-dependent (from `BetriebsartList`): WPL 10 AC / WPM3 = Notbetrieb, **Bereitschaftsbetrieb**, Programmierbetrieb, **Komfortbetrieb**, Eco-Modus, Warmwasser; WPM2 = Notbetrieb, Bereitschaft, Automatik, Tagbetrieb, Absenkbetrieb, Warmwasser |
 | `select.manager_sg_ready_zustand` | 1 - EVU Sperre, 2 - Normal, 3 - Empfohlen, 4 - Zwang |
 
 ---

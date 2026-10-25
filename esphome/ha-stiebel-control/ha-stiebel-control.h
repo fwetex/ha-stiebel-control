@@ -1817,6 +1817,20 @@ public:
         writeCanSignalRouted(signalName, value);
     }
 
+    // Resolve the model's operating-mode label from its BetriebsartList index.
+    // The names differ between WPM2 ("Bereitschaft", "Tagbetrieb") and WPM3
+    // ("Bereitschaftsbetrieb", "Komfortbetrieb"); taking them from the table
+    // means the SG Ready mode can never drift from what TranslateString() accepts.
+    void writeOperatingMode(int mode) override {
+        const int count = static_cast<int>(High(BetriebsartList)) + 1;
+        if (mode < 0 || mode >= count) {
+            ESP_LOGW("SG_READY", "Operating mode index %d out of range (0..%d) — refusing", mode, count - 1);
+            return;
+        }
+        ESP_LOGD("SG_READY", "Operating mode %d -> \"%s\"", mode, BetriebsartList[mode].Name);
+        writeCanSignalRouted("PROGRAMMSCHALTER", BetriebsartList[mode].Name);
+    }
+
     // Current setpoints tracked from the CAN polls (see updateSensor dispatch).
     // Unknown values (never seen) are reported as 0.0 so the controller falls
     // back to its defaults.

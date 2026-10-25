@@ -1292,6 +1292,58 @@ TEST_CASE("writeSignal: et_betriebsart with valid German string is sent", "[can]
     CHECK(fake_can().sent.size() == 1);
 }
 
+// ============================================================================
+// Operating mode resolution — the label must come from the model's table
+// ============================================================================
+
+TEST_CASE("BetriebsartList: the SG Ready mode indices exist in every model", "[can]") {
+    const int count = static_cast<int>(High(BetriebsartList)) + 1;
+    CHECK(SgReadyController::MODE_STANDBY >= 0);
+    CHECK(SgReadyController::MODE_STANDBY < count);
+    CHECK(SgReadyController::MODE_COMFORT >= 0);
+    CHECK(SgReadyController::MODE_COMFORT < count);
+
+    // Both indices must be translatable back to their protocol value, whichever
+    // label the compiled model uses ("Bereitschaft"/"Bereitschaftsbetrieb", …).
+    const char* standby = BetriebsartList[SgReadyController::MODE_STANDBY].Name;
+    const char* comfort = BetriebsartList[SgReadyController::MODE_COMFORT].Name;
+    const char* p1 = standby;
+    const char* p2 = comfort;
+    CHECK(TranslateString(p1, et_betriebsart) == 0x0100);
+    CHECK(TranslateString(p2, et_betriebsart) == 0x0300);
+}
+
+TEST_CASE("writeOperatingMode: writes the table's label to PROGRAMMSCHALTER", "[can]") {
+    // Regression: applyEvuLock() used the literal "Bereitschaft" (the WPM2 name).
+    // On a WPL10AC build the table calls mode 1 "Bereitschaftsbetrieb", so
+    // TranslateString() refused the write — EVU lock silently never reached the
+    // bus while MQTT and NVS already reported state 1.
+    lastSignalValue.clear();
+    fake_can().sent.clear();
+
+    sgReadyIO.writeOperatingMode(SgReadyController::MODE_STANDBY);
+    REQUIRE(fake_can().sent.size() == 2);      // write + read-back
+    CHECK(fake_can().sent[0][3] == 0x01);      // register index 0x0112
+    CHECK(fake_can().sent[0][4] == 0x12);
+    CHECK(fake_can().sent[0][5] == 0x01);      // value 0x0100 = standby
+    CHECK(fake_can().sent[0][6] == 0x00);
+
+    fake_can().sent.clear();
+    sgReadyIO.writeOperatingMode(SgReadyController::MODE_COMFORT);
+    REQUIRE(fake_can().sent.size() == 2);
+    CHECK(fake_can().sent[0][5] == 0x03);      // value 0x0300 = comfort
+    CHECK(fake_can().sent[0][6] == 0x00);
+}
+
+TEST_CASE("writeOperatingMode: an out-of-range index sends nothing", "[can]") {
+    lastSignalValue.clear();
+    fake_can().sent.clear();
+
+    sgReadyIO.writeOperatingMode(-1);
+    sgReadyIO.writeOperatingMode(99);
+    CHECK(fake_can().sent.empty());
+}
+
 TEST_CASE("i18n: sgReadyOptions contains 4 non-empty entries", "[i18n]") {
     for (size_t i = 0; i < 4; ++i)
         CHECK(std::string(sgReadyOptions[i]).length() > 0);
