@@ -414,6 +414,7 @@ static void resetDiscoveryState() {
     discoveredWritableSelects.clear();
     copDiscoveryPublished = false;   // one-shot guard of publishCOPDiscovery()
     mqtt_client_instance().clear();
+    mqtt_client_instance().connected = true;
 }
 
 // Look a writable number up by signal name. The table is model-gated and its order
@@ -640,6 +641,71 @@ TEST_CASE("discovery: every entity path reports firmware version and model", "[m
     checkPayload("cop_ww");
     checkPayload("cop_heiz");
     checkPayload("cop_gesamt");
+}
+
+// ============================================================================
+// Discovery retry — a config the broker refused must not be marked as done
+// ============================================================================
+
+TEST_CASE("discovery: a raw signal's config is retried after a failed publish", "[mqtt]") {
+    resetDiscoveryState();
+    const ElsterIndex* ei = GetElsterIndex("RAUMSOLLTEMP_I");
+    REQUIRE(ei != nullptr);
+
+    // A frame can arrive during boot, before the broker connection exists.
+    mqtt_client_instance().connected = false;
+    updateSensor(CanMembers[cm_manager], ei, "19.0");
+    CHECK(discoveredSignals.empty());
+    CHECK_FALSE(mqttTopicPublished("stiebel_manager_raumsolltemp_i/config"));
+
+    mqtt_client_instance().connected = true;
+    updateSensor(CanMembers[cm_manager], ei, "19.0");
+    CHECK(discoveredSignals.size() == 1);
+    CHECK(mqttTopicPublished("stiebel_manager_raumsolltemp_i/config"));
+}
+
+TEST_CASE("discovery: a calculated sensor is retried after a failed publish", "[mqtt]") {
+    resetDiscoveryState();
+    mqtt_client_instance().connected = false;
+    publishCalculatedSensorDiscovery(calculatedSensors[0], false);
+    CHECK(discoveredCalculatedSensors.empty());
+
+    mqtt_client_instance().connected = true;
+    publishCalculatedSensorDiscovery(calculatedSensors[0], false);
+    CHECK(discoveredCalculatedSensors.size() == 1);
+    CHECK(mqttTopicPublished(calculatedSensors[0].uniqueId));
+}
+
+TEST_CASE("discovery: writable number and select are retried after a failed publish", "[mqtt]") {
+    resetDiscoveryState();
+    mqtt_client_instance().connected = false;
+    publishWritableNumberDiscovery(writableNumber("WW_SOLL"), false);
+    publishWritableSelectDiscovery(writableSelects[0], false);
+    CHECK(discoveredWritableNumbers.empty());
+    CHECK(discoveredWritableSelects.empty());
+
+    mqtt_client_instance().connected = true;
+    publishWritableNumberDiscovery(writableNumber("WW_SOLL"), false);
+    publishWritableSelectDiscovery(writableSelects[0], false);
+    CHECK(discoveredWritableNumbers.size() == 1);
+    CHECK(discoveredWritableSelects.size() == 1);
+    CHECK(mqttTopicPublished("stiebel_manager_ww_soll/config"));
+    CHECK(mqttTopicPublished("stiebel_manager_programmschalter/config"));
+}
+
+TEST_CASE("discovery: the COP one-shot guard is set only after a successful publish", "[mqtt]") {
+    resetDiscoveryState();
+    mqtt_client_instance().connected = false;
+    publishCOPDiscovery();
+    CHECK_FALSE(copDiscoveryPublished);
+    CHECK_FALSE(mqttTopicPublished("cop_ww"));
+
+    mqtt_client_instance().connected = true;
+    publishCOPDiscovery();
+    CHECK(copDiscoveryPublished);
+    CHECK(mqttTopicPublished("cop_ww"));
+    CHECK(mqttTopicPublished("cop_heiz"));
+    CHECK(mqttTopicPublished("cop_gesamt"));
 }
 
 // ============================================================================

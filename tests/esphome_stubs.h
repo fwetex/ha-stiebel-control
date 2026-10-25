@@ -64,8 +64,13 @@ inline FakeCanBus& fake_can() { static FakeCanBus b; return b; }
 struct FakeMqttClient {
     struct Published { std::string topic; std::string payload; };
     std::vector<Published> messages;
+    // Simulates the broker connection: ESPHome's MQTT client refuses publishes while
+    // disconnected, which is what a signal received during boot (before the connection
+    // is up) hits.
+    bool connected = true;
     // Overloads for const char* and std::string topics (ha-stiebel-control.h uses both)
     bool publish(const char* topic, const char* payload, size_t /*len*/, int /*qos*/, bool /*retain*/) {
+        if (!connected) return false;
         messages.push_back({topic, payload ? payload : ""});
         return true;
     }

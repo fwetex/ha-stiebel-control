@@ -869,7 +869,7 @@ bool writeSignal(const CanMember *cm, const char *elsterName, const char *str)
 // temporarily offline) is reported at most every 5 s instead of being silently
 // swallowed — the return value of ESPHome's publish() is bool.
 static uint32_t lastMqttFailLogTs = 0;
-inline void publishMqttChecked(const char* topic, const char* payload, size_t len,
+inline bool publishMqttChecked(const char* topic, const char* payload, size_t len,
                                const uint8_t qos = 0, const bool retain = true) {
     const bool ok = id(mqtt_client).publish(topic, payload, len, qos, retain);
     if (!ok) {
@@ -879,11 +879,12 @@ inline void publishMqttChecked(const char* topic, const char* payload, size_t le
             ESP_LOGW("MQTT", "publish failed to '%s': %.*s", topic, (int)len, payload);
         }
     }
+    return ok;
 }
 // std::string-topic overload (matches ESPHome's publish overload set)
-inline void publishMqttChecked(const std::string &topic, const char* payload, size_t len,
+inline bool publishMqttChecked(const std::string &topic, const char* payload, size_t len,
                                const uint8_t qos = 0, const bool retain = true) {
-    publishMqttChecked(topic.c_str(), payload, len, qos, retain);
+    return publishMqttChecked(topic.c_str(), payload, len, qos, retain);
 }
 
 // Every entity must carry the device availability topic. Without it Home Assistant shows
@@ -908,9 +909,6 @@ void publishCalculatedSensorDiscovery(const CalculatedSensorConfig& config, bool
     if (!forceRepublish && discoveredCalculatedSensors.find(config.uniqueId) != discoveredCalculatedSensors.end()) {
         return;
     }
-    
-    // Mark as discovered
-    discoveredCalculatedSensors.insert(config.uniqueId);
     
     // Build discovery topic
     char discoveryTopic[256];
@@ -965,9 +963,12 @@ void publishCalculatedSensorDiscovery(const CalculatedSensorConfig& config, bool
             << "\"name\":\"Stiebel Eltron Wärmepumpe\","
             << DEVICE_METADATA_FIELD << "}}";
 
-    // Publish discovery message
+    // Publish discovery message; only record it once the broker accepted the config
     std::string payloadStr = payload.str();
-    publishMqttChecked(discoveryTopic, payloadStr.c_str(), payloadStr.length(), 0, true);
+    if (!publishMqttChecked(discoveryTopic, payloadStr.c_str(), payloadStr.length(), 0, true)) {
+        return;
+    }
+    discoveredCalculatedSensors.insert(config.uniqueId);
 
     ESP_LOGI("MQTT", "Discovery published for calculated sensor: %s", config.name);
 }
@@ -1003,9 +1004,6 @@ void publishWritableNumberDiscovery(const WritableNumberConfig& config, bool for
     if (!forceRepublish && discoveredWritableNumbers.find(uid) != discoveredWritableNumbers.end()) {
         return;
     }
-    
-    // Mark as discovered
-    discoveredWritableNumbers.insert(uid);
     
     // Build discovery topic: homeassistant/number/heatingpump/<unique_id>/config
     char discoveryTopic[256];
@@ -1060,9 +1058,12 @@ void publishWritableNumberDiscovery(const WritableNumberConfig& config, bool for
                 << DEVICE_METADATA_FIELD << "}}";
     }
 
-    // Publish discovery message
+    // Publish discovery message; only record it once the broker accepted the config
     std::string payloadStr = payload.str();
-    publishMqttChecked(discoveryTopic, payloadStr.c_str(), payloadStr.length(), 0, true);
+    if (!publishMqttChecked(discoveryTopic, payloadStr.c_str(), payloadStr.length(), 0, true)) {
+        return;
+    }
+    discoveredWritableNumbers.insert(uid);
 
     ESP_LOGI("MQTT", "Discovery published for writable number: %s", config.friendlyName);
 }
@@ -1161,11 +1162,11 @@ void publishWritableSelectDiscovery(const WritableSelectConfig& config, bool for
                 << DEVICE_METADATA_FIELD << "}}";
     }
 
-    // Publish discovery message
+    // Publish discovery message; only record it once the broker accepted the config
     std::string payloadStr = payload.str();
-    publishMqttChecked(discoveryTopic, payloadStr.c_str(), payloadStr.length(), 0, true);
-
-    // Mark as discovered
+    if (!publishMqttChecked(discoveryTopic, payloadStr.c_str(), payloadStr.length(), 0, true)) {
+        return;
+    }
     discoveredWritableSelects.insert(uniqueIdStr);
     
     ESP_LOGI("MQTT", "Discovery published for writable select: %s", config.friendlyName);
@@ -1417,7 +1418,11 @@ inline const std::string& getOrCreateUID(const CanMember &cm, const char* signal
 }
 
 // Publish MQTT Discovery config for a signal
-void publishMqttDiscovery(const CanMember &cm, const ElsterIndex *ei) {
+// Returns true when the broker accepted the config. Callers must only record the
+// entity as discovered in that case: a signal received before the MQTT connection is
+// up would otherwise stay invisible until the periodic republish (or forever, if the
+// value never changes again).
+bool publishMqttDiscovery(const CanMember &cm, const ElsterIndex *ei) {
     
     // Get cached UID (avoids repeated string operations)
     const std::string& uid = getOrCreateUID(cm, ei->Name);
@@ -1523,9 +1528,10 @@ void publishMqttDiscovery(const CanMember &cm, const ElsterIndex *ei) {
     
     // Publish discovery message with retain flag
     std::string payloadStr = payload.str();
-    publishMqttChecked(discoveryTopic, payloadStr.c_str(), payloadStr.length(), 0, true);
-    
-    ESP_LOGI("MQTT", "Discovery published for %s", friendlyName);
+    const bool ok = publishMqttChecked(discoveryTopic, payloadStr.c_str(), payloadStr.length(), 0, true);
+
+    if (ok) ESP_LOGI("MQTT", "Discovery published for %s", friendlyName);
+    return ok;
 }
 
 // Republish all MQTT discoveries (periodic refresh + prune blacklisted registers).
@@ -1599,6 +1605,10 @@ static std::unordered_map<std::string, float> copEnergyValues;
 static bool copDiscoveryPublished = false;
 void publishCOPDiscovery() {
     if (copDiscoveryPublished) return;
+
+    // Only latch the one-shot guard once all three configs were accepted; otherwise a
+    // call while the broker is unreachable would hide the COP entities until reboot.
+    bool ok = true;
     
     // COP WW
     {
@@ -1614,7 +1624,7 @@ void publishCOPDiscovery() {
                 << "\"name\":\"Stiebel Eltron Wärmepumpe\","
                 << DEVICE_METADATA_FIELD << "}}";
         std::string payloadStr = payload.str();
-        publishMqttChecked(discoveryTopic, payloadStr.c_str(), payloadStr.length(), 0, true);
+        ok = publishMqttChecked(discoveryTopic, payloadStr.c_str(), payloadStr.length(), 0, true) && ok;
     }
     
     // COP Heizung
@@ -1631,7 +1641,7 @@ void publishCOPDiscovery() {
                 << "\"name\":\"Stiebel Eltron Wärmepumpe\","
                 << DEVICE_METADATA_FIELD << "}}";
         std::string payloadStr = payload.str();
-        publishMqttChecked(discoveryTopic, payloadStr.c_str(), payloadStr.length(), 0, true);
+        ok = publishMqttChecked(discoveryTopic, payloadStr.c_str(), payloadStr.length(), 0, true) && ok;
     }
     
     // COP Gesamt
@@ -1648,9 +1658,13 @@ void publishCOPDiscovery() {
                 << "\"name\":\"Stiebel Eltron Wärmepumpe\","
                 << DEVICE_METADATA_FIELD << "}}";
         std::string payloadStr = payload.str();
-        publishMqttChecked(discoveryTopic, payloadStr.c_str(), payloadStr.length(), 0, true);
+        ok = publishMqttChecked(discoveryTopic, payloadStr.c_str(), payloadStr.length(), 0, true) && ok;
     }
     
+    if (!ok) {
+        ESP_LOGW("MQTT", "COP discovery not published — will retry on the next MQTT connect");
+        return;
+    }
     copDiscoveryPublished = true;
     ESP_LOGI("MQTT", "Discovery published for COP sensors");
 }
@@ -2135,9 +2149,12 @@ void updateSensor(const CanMember &cm, const ElsterIndex *ei, const std::string 
     bool needsDiscovery = (discoveredSignals.find(uid) == discoveredSignals.end());
     
     if (needsDiscovery) {
-        // Mark as discovered and publish discovery immediately
-        discoveredSignals.insert(uid);
-        publishMqttDiscovery(cm, ei);
+        // Only mark it as discovered once the broker accepted the config — a signal
+        // received before the MQTT connection is up would otherwise stay invisible
+        // until the periodic republish, or forever if its value never changes again.
+        if (publishMqttDiscovery(cm, ei)) {
+            discoveredSignals.insert(uid);
+        }
     }
     
     // Publish state

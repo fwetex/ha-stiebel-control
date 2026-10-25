@@ -132,6 +132,12 @@ mqtt:
         publishWritableSelectDiscoveryByName("SG_READY_STATE");
         publishAllWritableNumberDiscoveries();
         publishWritableSelectDiscoveryByName("PROGRAMMSCHALTER");
+        // Raw-signal, calculated and COP discoveries: republish everything already seen.
+        // This covers a broker restart (retained configs lost) and the boot race where a
+        // frame arrived before this connection existed — a config we could not publish is
+        // no longer marked as done, and this sweep picks up anything that slipped through.
+        republishAllDiscoveries();
+        publishCOPDiscovery();
         // Datetime is set via heatingpump/DATETIME/set (strictly validated) or the
         // "WPM Datum & Uhrzeit übernehmen" button, which reads the HA time source.
         ESP_LOGI("MQTT_CONN", "Discovery publication complete");
@@ -401,6 +407,7 @@ interval:
           republishAllDiscoveries();
           publishAllWritableNumberDiscoveries(true);
           publishAllWritableSelectDiscoveries(true);
+          publishCOPDiscovery();
 
 #########################################
 #                                       #

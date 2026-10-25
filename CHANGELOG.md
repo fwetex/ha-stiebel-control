@@ -86,6 +86,13 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions: [Sem
 
 ### Fixed
 
+- **Discovery configs could be lost if a signal arrived before the MQTT connection was up.** The
+  "already published" marker was set *before* the publish, so a config the broker refused was
+  never retried — the entity stayed missing until the 15-minute republish, or indefinitely for a
+  value that never changed again. All five discovery paths now mark an entity only after the
+  broker accepted the config, the COP one-shot guard latches only on success, and `on_connect`
+  republishes the raw/calculated/COP discoveries (which also restores retained configs after a
+  broker restart).
 - **EVU lock (SG Ready state 1) did nothing on the WPL 10 AC.** `applyEvuLock()` wrote the literal
   operating mode `"Bereitschaft"` — the WPM2 label. On a WPM3 (WPL 10 AC) build the table calls
   that mode `"Bereitschaftsbetrieb"`, so `TranslateString()` returned -1 and `writeSignal()`
