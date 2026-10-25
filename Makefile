@@ -5,6 +5,12 @@ DEVICE_MODEL ?= $(shell grep 'device_model:' esphome/heatingpump.yaml | grep -v 
 MQTT_BROKER  ?= $(shell grep 'mqtt_broker:' esphome/secrets.yaml | sed 's/mqtt_broker:[[:space:]]*//' | tr -d '"')
 MQTT_USER    ?= $(shell grep 'mqtt_username:' esphome/secrets.yaml | sed 's/mqtt_username:[[:space:]]*//' | tr -d '"')
 MQTT_PASS    ?= $(shell grep 'mqtt_password:' esphome/secrets.yaml | sed 's/mqtt_password:[[:space:]]*//' | tr -d '"')
+# Firmware version baked into the image and shown in Home Assistant (device page).
+# The ESPHome config reads it via `!env_var FW_VERSION "dev"`. git describe gives the
+# nearest v-tag + commit count + hash, with a -dirty suffix for local modifications.
+# A bare `esphome compile` (ESPHome dashboard) does not set it and reports "dev".
+FW_VERSION   ?= $(shell git describe --tags --match 'v*' --always --dirty 2>/dev/null || echo dev)
+export FW_VERSION
 # OTA target: static IP from common.yaml wifi.use_address (mDNS does not work reliably in WSL)
 OTA_ADDR     ?= $(shell grep 'use_address:' esphome/ha-stiebel-control/common.yaml | head -1 | awk '{print $$2}')
 

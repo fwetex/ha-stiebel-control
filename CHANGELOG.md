@@ -9,6 +9,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions: [Sem
 
 ### Added
 
+- **Firmware version and build date are visible in Home Assistant.** `make` and CI bake
+  `git describe` (`v2.1.1-63-gdf48757`, with `-dirty` for local changes) into
+  `esphome.project.version`; every MQTT discovery device block now reports it as `sw_version`
+  together with the model, and a diagnostic text sensor `Firmware` shows the version plus the
+  compile timestamp. Images built without the Makefile (ESPHome dashboard) report `dev`.
 - **`WW_SOLL` — combined DHW setpoint.** Replaces the two raw `EINSTELL_SPEICHERSOLLTEMP` /
   `EINSTELL_SPEICHERSOLLTEMP2` number entities and their `/set` topics. On the WPL 10 AC (WPM3)
   both Einstell registers are written together, because the active setpoint may follow either one.

@@ -23,6 +23,28 @@
 #define HA_STRINGIFY(x) HA_STRINGIFY_(x)
 #define HA_DEVICE_MODEL_STR HA_STRINGIFY(HA_DEVICE_MODEL)
 
+// Human-readable model, used in the MQTT discovery device block ("model").
+#if defined(HA_MODEL_wpl10ac)
+#define HA_MODEL_LABEL "WPL 10 AC"
+#elif defined(HA_MODEL_wpl13e)
+#define HA_MODEL_LABEL "WPL 13 E"
+#elif defined(HA_MODEL_wpf10)
+#define HA_MODEL_LABEL "WPF 10"
+#else
+#define HA_MODEL_LABEL HA_DEVICE_MODEL_STR
+#endif
+
+// Firmware version: ESPHome injects these when `esphome: project:` is set (see
+// common.yaml — the version comes from the `FW_VERSION` environment variable, which
+// `make` and CI fill from `git describe`). The fallbacks keep the host-test build
+// and unbranded builds working.
+#ifndef ESPHOME_PROJECT_VERSION
+#define ESPHOME_PROJECT_VERSION "dev"
+#endif
+#ifndef ESPHOME_VERSION
+#define ESPHOME_VERSION "host"
+#endif
+
 // ============================================================================
 // REQUEST MANAGER SETTINGS
 // ============================================================================

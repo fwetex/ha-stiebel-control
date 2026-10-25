@@ -21,7 +21,10 @@ esphome:
   friendly_name: "Heating Pump CAN Interface"
   project:
     name: "bullitt186.ha-stiebel-control"
-    version: "2.1.1"
+    # Firmware version shown in Home Assistant (device page). `make` and CI export
+    # FW_VERSION from `git describe`; a bare `esphome compile` (e.g. the ESPHome
+    # dashboard) falls back to "dev".
+    version: !env_var FW_VERSION "dev"
   on_boot:
     priority: 600
     then:
@@ -416,6 +419,18 @@ text_sensor:
   - platform: debug
     reset_reason:
       name: "Reset Reason"
+
+  # Firmware build stamp: the git version baked in at configure time plus the
+  # compile timestamp of this translation unit. Makes a running firmware
+  # identifiable in HA without opening the ESPHome dashboard.
+  - platform: template
+    name: "Firmware"
+    id: fw_build
+    icon: "mdi:information-outline"
+    entity_category: diagnostic
+    update_interval: 60s
+    lambda: |-
+      return std::string(ESPHOME_PROJECT_VERSION) + " · " __DATE__ " " __TIME__;
 
   #########################################
   #                                       #

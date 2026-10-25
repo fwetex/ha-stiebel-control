@@ -596,6 +596,52 @@ TEST_CASE("discovery: all entity paths carry the availability topic", "[mqtt]") 
     CHECK(mqttFindPayload("cop_gesamt").find("availability_topic") != std::string::npos);
 }
 
+TEST_CASE("discovery: every entity path reports firmware version and model", "[mqtt]") {
+    resetDiscoveryState();
+
+    // Host build: config.h falls back to "dev"/"host", the stubs define HA_DEVICE_MODEL
+    // as test_model (no HA_MODEL_* macro, so the label is the model string).
+    const std::string sw    = "\"sw_version\":\"dev (ESPHome host)\"";
+    const std::string model = "\"model\":\"test_model\"";
+
+    auto checkPayload = [&](const std::string& prefix) {
+        const std::string payload = mqttFindPayload(prefix);
+        INFO("payload: " << payload);
+        CHECK(payload.find(sw) != std::string::npos);
+        CHECK(payload.find(model) != std::string::npos);
+        // A leading comma in the shared field would produce ",," and invalidate the JSON.
+        CHECK(payload.find(",,") == std::string::npos);
+    };
+
+    // raw CAN sensor
+    const ElsterIndex* ei = GetElsterIndex("RAUMSOLLTEMP_I");
+    REQUIRE(ei != nullptr);
+    updateSensor(CanMembers[cm_manager], ei, "19.0");
+    checkPayload("homeassistant/sensor/heatingpump/");
+
+    // calculated sensor (main device)
+    resetDiscoveryState();
+    publishCalculatedSensorDiscovery(calculatedSensors[0], true);
+    checkPayload("homeassistant/");
+
+    // writable number (CAN member sub-device)
+    resetDiscoveryState();
+    publishWritableNumberDiscovery(writableNumber("WW_SOLL"), true);
+    checkPayload("homeassistant/number/");
+
+    // writable select
+    resetDiscoveryState();
+    publishWritableSelectDiscovery(writableSelects[0], true);
+    checkPayload("homeassistant/select/");
+
+    // COP sensors (three configs)
+    resetDiscoveryState();
+    publishCOPDiscovery();
+    checkPayload("cop_ww");
+    checkPayload("cop_heiz");
+    checkPayload("cop_gesamt");
+}
+
 // ============================================================================
 // "not found" vs "blacklisted" — INDEX_NOT_FOUND is a sentinel, not a verdict
 // ============================================================================

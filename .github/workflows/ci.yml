@@ -31,6 +31,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0   # tags are needed for `git describe`
 
       - uses: actions/setup-python@v5
         with:
@@ -41,6 +43,9 @@ jobs:
 
       - name: Use CI secrets
         run: cp esphome/ci_secrets.yaml esphome/secrets.yaml
+
+      - name: Firmware version
+        run: echo "FW_VERSION=$(git describe --tags --match 'v*' --always --dirty)" >> "$GITHUB_ENV"
 
       - name: Compile (ESP32-S3)
         run: esphome compile esphome/ci_heatingpump_s3.yaml
@@ -50,6 +55,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0   # tags are needed for `git describe`
 
       - uses: actions/setup-python@v5
         with:
@@ -60,6 +67,9 @@ jobs:
 
       - name: Use CI secrets
         run: cp esphome/ci_secrets.yaml esphome/secrets.yaml
+
+      - name: Firmware version
+        run: echo "FW_VERSION=$(git describe --tags --match 'v*' --always --dirty)" >> "$GITHUB_ENV"
 
       - name: Compile (ESP32-S2)
         run: esphome compile esphome/ci_heatingpump_s2.yaml
@@ -73,6 +83,8 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0   # tags are needed for `git describe`
 
       - uses: actions/setup-python@v5
         with:
@@ -83,6 +95,9 @@ jobs:
 
       - name: Use CI secrets
         run: cp esphome/ci_secrets.yaml esphome/secrets.yaml
+
+      - name: Firmware version
+        run: echo "FW_VERSION=$(git describe --tags --match 'v*' --always --dirty)" >> "$GITHUB_ENV"
 
       - name: Verify S3 firmware compiles
         run: esphome compile esphome/ci_heatingpump_s3.yaml
@@ -116,6 +131,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0   # tags are needed for `git describe`
 
       - uses: actions/setup-python@v5
         with:

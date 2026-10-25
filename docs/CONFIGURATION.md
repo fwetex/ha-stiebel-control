@@ -155,6 +155,34 @@ heatingpump/status    → "online" or "offline"
 
 ---
 
+## Firmware Version & Build Date
+
+The firmware carries the git version it was built from. `make compile`, `make upload` and
+`make compile-s2` derive it automatically:
+
+```bash
+git describe --tags --match 'v*' --always --dirty   # e.g. v2.1.1-63-gdf48757
+```
+
+and export it as `FW_VERSION`; `common.yaml` reads it with `!env_var FW_VERSION "dev"` into
+`esphome.project.version`. CI does the same. Where it shows up:
+
+| Place | Content |
+|---|---|
+| HA device page (main device and all CAN member sub-devices) | `sw_version`: `v2.1.1-63-gdf48757 (ESPHome 2026.9.1)` |
+| Diagnostic text sensor `Firmware` (on the ESPHome node device) | version + compile timestamp, e.g. `v2.1.1-63-gdf48757 · Oct 25 2026 18:42:07` |
+
+Notes:
+
+- A `-dirty` suffix means the build included uncommitted changes. The version is baked at build
+  time, so rebuild after committing to get a clean version.
+- A build started directly with `esphome compile` (ESPHome dashboard) has no `FW_VERSION` in its
+  environment and reports `dev`. Use the Makefile (or export `FW_VERSION` yourself) for
+  identifiable images.
+- Override explicitly with `make compile FW_VERSION=my-build` if needed.
+
+---
+
 ## Polling Frequencies
 
 Edit `esphome/ha-stiebel-control/signal_requests_wpl13e.h` (or your model's file):

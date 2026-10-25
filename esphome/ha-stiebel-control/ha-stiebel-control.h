@@ -892,6 +892,16 @@ inline void publishMqttChecked(const std::string &topic, const char* payload, si
 // No leading/trailing comma: each call site decides (the JSON before it usually ends in one).
 static const char* const AVAILABILITY_FIELD = "\"availability_topic\":\"heatingpump/status\"";
 
+// Shared MQTT discovery device metadata. Every discovery payload points at one of
+// two devices (the main `stiebel_eltron_<model>` or a CAN member), and all of them
+// should report the same firmware version/model in Home Assistant — otherwise the
+// sub-devices show an empty firmware field. Keeping it in one constant avoids the
+// nine device blocks drifting apart.
+#define DEVICE_METADATA_FIELD \
+    "\"manufacturer\":\"Stiebel Eltron\"" \
+    ",\"model\":\"" HA_MODEL_LABEL "\"" \
+    ",\"sw_version\":\"" ESPHOME_PROJECT_VERSION " (ESPHome " ESPHOME_VERSION ")\""
+
 // Unified function to publish MQTT discovery for calculated sensors
 void publishCalculatedSensorDiscovery(const CalculatedSensorConfig& config, bool forceRepublish = false) {
     // Check if already published (unless force republish)
@@ -953,7 +963,7 @@ void publishCalculatedSensorDiscovery(const CalculatedSensorConfig& config, bool
     payload << "," << AVAILABILITY_FIELD
             << ",\"device\":{\"identifiers\":[\"stiebel_eltron_" HA_DEVICE_MODEL_STR "\"],"
             << "\"name\":\"Stiebel Eltron Wärmepumpe\","
-            << "\"manufacturer\":\"Stiebel Eltron\"}}";
+            << DEVICE_METADATA_FIELD << "}}";
 
     // Publish discovery message
     std::string payloadStr = payload.str();
@@ -1033,7 +1043,7 @@ void publishWritableNumberDiscovery(const WritableNumberConfig& config, bool for
         // SG Ready controls go to main device
         payload << "\"device\":{\"identifiers\":[\"stiebel_eltron_" HA_DEVICE_MODEL_STR "\"],"
                 << "\"name\":\"Stiebel Eltron Wärmepumpe\","
-                << "\"manufacturer\":\"Stiebel Eltron\"}}";
+                << DEVICE_METADATA_FIELD << "}}";
     } else {
         // Regular controls go to their respective CAN member device
         char canMemberDeviceId[64];
@@ -1047,7 +1057,7 @@ void publishWritableNumberDiscovery(const WritableNumberConfig& config, bool for
         payload << "\"device\":{\"identifiers\":[\"" << canMemberDeviceId << "\"],"
                 << "\"name\":\"" << canMemberFriendlyName << "\","
                 << "\"via_device\":\"stiebel_eltron_" HA_DEVICE_MODEL_STR "\","
-                << "\"manufacturer\":\"Stiebel Eltron\"}}";
+                << DEVICE_METADATA_FIELD << "}}";
     }
 
     // Publish discovery message
@@ -1134,7 +1144,7 @@ void publishWritableSelectDiscovery(const WritableSelectConfig& config, bool for
         // SG Ready controls go to main device
         payload << "\"device\":{\"identifiers\":[\"stiebel_eltron_" HA_DEVICE_MODEL_STR "\"],"
                 << "\"name\":\"Stiebel Eltron Wärmepumpe\","
-                << "\"manufacturer\":\"Stiebel Eltron\"}}";
+                << DEVICE_METADATA_FIELD << "}}";
     } else {
         // Regular controls go to their respective CAN member device
         char canMemberDeviceId[64];
@@ -1148,7 +1158,7 @@ void publishWritableSelectDiscovery(const WritableSelectConfig& config, bool for
         payload << "\"device\":{\"identifiers\":[\"" << canMemberDeviceId << "\"],"
                 << "\"name\":\"" << canMemberFriendlyName << "\","
                 << "\"via_device\":\"stiebel_eltron_" HA_DEVICE_MODEL_STR "\","
-                << "\"manufacturer\":\"Stiebel Eltron\"}}";
+                << DEVICE_METADATA_FIELD << "}}";
     }
 
     // Publish discovery message
@@ -1509,7 +1519,7 @@ void publishMqttDiscovery(const CanMember &cm, const ElsterIndex *ei) {
     payload << ",\"device\":{\"identifiers\":[\"" << canMemberDeviceId << "\"],"
             << "\"name\":\"" << canMemberFriendlyName << "\","
             << "\"via_device\":\"" << mainDeviceId << "\","
-            << "\"manufacturer\":\"Stiebel Eltron\"}}";
+            << DEVICE_METADATA_FIELD << "}}";
     
     // Publish discovery message with retain flag
     std::string payloadStr = payload.str();
@@ -1602,7 +1612,7 @@ void publishCOPDiscovery() {
                 << AVAILABILITY_FIELD << ","
                 << "\"device\":{\"identifiers\":[\"stiebel_eltron_" HA_DEVICE_MODEL_STR "\"],"
                 << "\"name\":\"Stiebel Eltron Wärmepumpe\","
-                << "\"manufacturer\":\"Stiebel Eltron\"}}";
+                << DEVICE_METADATA_FIELD << "}}";
         std::string payloadStr = payload.str();
         publishMqttChecked(discoveryTopic, payloadStr.c_str(), payloadStr.length(), 0, true);
     }
@@ -1619,7 +1629,7 @@ void publishCOPDiscovery() {
                 << AVAILABILITY_FIELD << ","
                 << "\"device\":{\"identifiers\":[\"stiebel_eltron_" HA_DEVICE_MODEL_STR "\"],"
                 << "\"name\":\"Stiebel Eltron Wärmepumpe\","
-                << "\"manufacturer\":\"Stiebel Eltron\"}}";
+                << DEVICE_METADATA_FIELD << "}}";
         std::string payloadStr = payload.str();
         publishMqttChecked(discoveryTopic, payloadStr.c_str(), payloadStr.length(), 0, true);
     }
@@ -1636,7 +1646,7 @@ void publishCOPDiscovery() {
                 << AVAILABILITY_FIELD << ","
                 << "\"device\":{\"identifiers\":[\"stiebel_eltron_" HA_DEVICE_MODEL_STR "\"],"
                 << "\"name\":\"Stiebel Eltron Wärmepumpe\","
-                << "\"manufacturer\":\"Stiebel Eltron\"}}";
+                << DEVICE_METADATA_FIELD << "}}";
         std::string payloadStr = payload.str();
         publishMqttChecked(discoveryTopic, payloadStr.c_str(), payloadStr.length(), 0, true);
     }
