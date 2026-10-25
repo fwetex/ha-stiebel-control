@@ -182,7 +182,7 @@
 #undef  LNAME_WP_STATUS
 #define LNAME_WP_STATUS                        "Heat Pump Status"
 #undef  LNAME_SOMMERBETRIEB
-#define LNAME_SOMMERBETRIEB                    "Summer Mode"
+#define LNAME_SOMMERBETRIEB                    "Summer mode enabled"
 #undef  LNAME_BETRIEBSART_WP
 #define LNAME_BETRIEBSART_WP                   "Heat Pump Operating Mode"
 

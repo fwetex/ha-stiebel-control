@@ -98,7 +98,7 @@
 #define LNAME_WAERMEERTRAG_HEIZ_SUM_MWH        "Wärme Ertrag Heizung Summe MWh"
 #define LNAME_GEBAEUDEART                      "Gebäudeart"
 #define LNAME_WP_STATUS                        "Wärmepumpe Status"
-#define LNAME_SOMMERBETRIEB                    "Sommerbetrieb"
+#define LNAME_SOMMERBETRIEB                    "Sommerbetrieb freigegeben"
 #define LNAME_BETRIEBSART_WP                   "Betriebsart Wärmepumpe"
 
 // ============================================================================

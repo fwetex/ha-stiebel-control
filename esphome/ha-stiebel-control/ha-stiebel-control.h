@@ -1292,28 +1292,22 @@ void publishTime()
 // Datetime states are now handled by Home Assistant input_datetime helpers
 // Read by ESPHome text_sensors and written via button triggers
 
-void publishBetriebsart(const std::string& sommerBetriebValue)
+void publishBetriebsart(const std::string& mode)
 {
     // Publish discovery (only once - cached)
     publishCalculatedSensorDiscovery(calculatedSensors[CALC_IDX_BETRIEBSART]);
-    
-    // Determine Betriebsart based on SOMMERBETRIEB value
-    // SOMMERBETRIEB is et_little_bool type, so value is "on" or "off"
-    std::string betriebsart;
-    std::string icon;
-    
-    if (sommerBetriebValue == "on") {
-        betriebsart = "Sommerbetrieb";
-        icon = "mdi:white-balance-sunny";
-    } else {
-        betriebsart = "Normalbetrieb";
-        icon = "mdi:circle-outline";
+
+    // `mode` is the decoded PROGRAMMSCHALTER register (et_betriebsart): the model's
+    // real operating mode ("Komfortbetrieb", "Eco-Modus", …). Do NOT derive it from
+    // SOMMERBETRIEB: on the WPM3 that register is only the summer-mode ENABLE flag
+    // (0xfdb4, confirmed 2026-10-25 — the WPM3 exposes no "summer active" status),
+    // so deriving said "Sommerbetrieb" while the pump ran in Komfortbetrieb.
+    if (mode.empty()) {
+        return;
     }
-    
-    // Publish state to MQTT
+
     const char* stateTopic = "heatingpump/calculated/betriebsart/state";
-    publishMqttChecked(stateTopic, betriebsart.c_str(), betriebsart.length(), 0, true);
-    // ESP_LOGD("CALC", "Published Betriebsart: %s (SOMMERBETRIEB=%s)", betriebsart.c_str(), sommerBetriebValue.c_str());
+    publishMqttChecked(stateTopic, mode.c_str(), mode.length(), 0, true);
 }
 
 void publishDeltaTContinuous()
@@ -2039,7 +2033,7 @@ constexpr uint32_t HASH_TAG = hash("TAG");
 constexpr uint32_t HASH_STUNDE = hash("STUNDE");
 constexpr uint32_t HASH_MINUTE = hash("MINUTE");
 constexpr uint32_t HASH_SEKUNDE = hash("SEKUNDE");
-constexpr uint32_t HASH_SOMMERBETRIEB = hash("SOMMERBETRIEB");
+constexpr uint32_t HASH_PROGRAMMSCHALTER = hash("PROGRAMMSCHALTER");
 constexpr uint32_t HASH_WPVORLAUFIST = hash("WPVORLAUFIST");
 constexpr uint32_t HASH_RAUMSOLLTEMP_I = hash("RAUMSOLLTEMP_I");
 constexpr uint32_t HASH_SPEICHERSOLLTEMP = hash("SPEICHERSOLLTEMP");
@@ -2227,7 +2221,11 @@ void updateSensor(const CanMember &cm, const ElsterIndex *ei, const std::string 
             break;
         }
         
-        case HASH_SOMMERBETRIEB:
+        case HASH_PROGRAMMSCHALTER:
+            // The actual operating mode (Komfortbetrieb, Eco-Modus, …). This used to
+            // be derived from SOMMERBETRIEB, which on the WPM3 is only the summer-mode
+            // ENABLE flag — so the calculated sensor said "Sommerbetrieb" while the
+            // pump was running in Komfortbetrieb.
             publishBetriebsart(value);
             break;
 

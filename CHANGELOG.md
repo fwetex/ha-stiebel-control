@@ -86,6 +86,15 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions: [Sem
 
 ### Fixed
 
+- **The calculated "Betriebsart" sensor invented "Sommerbetrieb" while the pump ran in
+  Komfortbetrieb.** It was derived from `SOMMERBETRIEB` (0xfdb4), which on the WPM3 is only the
+  summer-mode **enable** setting, not the active state. Verified on the device: the register reads
+  `0x0100` while the panel shows summer mode off, and every candidate status register
+  (`MERKER_SOMMER`, `KEIN_HEIZBEDARF`, `HEIZKREIS_PROGRAMMSCHALTER`, `BETRIEBSART_HZK_PUMPE`,
+  `AUSSENTEMP_MITTEL`) answers `0x8000` ("not available") from both MANAGER and BEDIENMODUL_WPM3 —
+  the WPM3 exposes no summer-active status over CAN. The sensor now mirrors the real
+  `PROGRAMMSCHALTER` mode ("Komfortbetrieb", "Eco-Modus", …), and the binary sensor is labelled
+  "Sommerbetrieb freigegeben" so the enable flag is not mistaken for the operating state.
 - **Discovery configs could be lost if a signal arrived before the MQTT connection was up.** The
   "already published" marker was set *before* the publish, so a config the broker refused was
   never retried — the entity stayed missing until the 15-minute republish, or indefinitely for a

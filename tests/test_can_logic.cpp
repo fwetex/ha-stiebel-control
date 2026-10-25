@@ -279,7 +279,7 @@ TEST_CASE("hash: known signal hashes match pre-computed constants", "[can]") {
     CHECK(hash_runtime("STUNDE")         == HASH_STUNDE);
     CHECK(hash_runtime("MINUTE")         == HASH_MINUTE);
     CHECK(hash_runtime("SEKUNDE")        == HASH_SEKUNDE);
-    CHECK(hash_runtime("SOMMERBETRIEB")  == HASH_SOMMERBETRIEB);
+    CHECK(hash_runtime("PROGRAMMSCHALTER") == HASH_PROGRAMMSCHALTER);
     CHECK(hash_runtime("WPVORLAUFIST")   == HASH_WPVORLAUFIST);
     CHECK(hash_runtime("RUECKLAUFISTTEMP") == HASH_RUECKLAUFISTTEMP);
     CHECK(hash_runtime("VERDICHTER")     == HASH_VERDICHTER);
@@ -641,6 +641,28 @@ TEST_CASE("discovery: every entity path reports firmware version and model", "[m
     checkPayload("cop_ww");
     checkPayload("cop_heiz");
     checkPayload("cop_gesamt");
+}
+
+TEST_CASE("updateSensor: Betriebsart follows PROGRAMMSCHALTER, not SOMMERBETRIEB", "[can]") {
+    resetDiscoveryState();
+    const ElsterIndex* prog   = GetElsterIndex("PROGRAMMSCHALTER");
+    const ElsterIndex* summer = GetElsterIndex("SOMMERBETRIEB");
+    REQUIRE(prog != nullptr);
+    REQUIRE(summer != nullptr);
+
+    updateSensor(CanMembers[cm_manager], prog, "Komfortbetrieb");
+    CHECK(mqttFindPayload("calculated/betriebsart/state") == "Komfortbetrieb");
+
+    // The summer-mode ENABLE flag used to overwrite the operating mode with the
+    // invented value "Sommerbetrieb" — it must no longer touch the sensor.
+    mqtt_client_instance().clear();
+    updateSensor(CanMembers[cm_manager], summer, "on");
+    CHECK(mqttFindPayload("calculated/betriebsart/state").empty());
+    CHECK(mqttFindPayload("MANAGER/SOMMERBETRIEB/state") == "on");
+
+    // A real mode change still updates it.
+    updateSensor(CanMembers[cm_manager], prog, "Eco-Modus");
+    CHECK(mqttFindPayload("calculated/betriebsart/state") == "Eco-Modus");
 }
 
 // ============================================================================
@@ -1052,16 +1074,20 @@ TEST_CASE("publishTime: skips when minute out of range", "[calc]") {
 // publishBetriebsart
 // ============================================================================
 
-TEST_CASE("publishBetriebsart: on → Sommerbetrieb", "[calc]") {
+TEST_CASE("publishBetriebsart: publishes the mode it is given", "[calc]") {
     resetDiscoveryState();
-    publishBetriebsart("on");
-    CHECK(mqttFindPayload("calculated/betriebsart/state") == "Sommerbetrieb");
+    publishBetriebsart("Komfortbetrieb");
+    CHECK(mqttFindPayload("calculated/betriebsart/state") == "Komfortbetrieb");
+
+    mqtt_client_instance().clear();
+    publishBetriebsart("Eco-Modus");
+    CHECK(mqttFindPayload("calculated/betriebsart/state") == "Eco-Modus");
 }
 
-TEST_CASE("publishBetriebsart: off → Normalbetrieb", "[calc]") {
+TEST_CASE("publishBetriebsart: an empty mode publishes nothing", "[calc]") {
     resetDiscoveryState();
-    publishBetriebsart("off");
-    CHECK(mqttFindPayload("calculated/betriebsart/state") == "Normalbetrieb");
+    publishBetriebsart("");
+    CHECK_FALSE(mqttTopicPublished("calculated/betriebsart/state"));
 }
 
 // ============================================================================
