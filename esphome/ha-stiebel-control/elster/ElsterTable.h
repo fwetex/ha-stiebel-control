@@ -395,8 +395,8 @@ static const ElsterIndex ElsterTable[] =
 // Wörsty:
 // 0x500   0x0199: 0x00f3    0x019a: 0x0007
 // 0x480   0x0199: 0xa500    0x019a: 0x1700
-  { "SOFTWARE_NUMMER"                             , 0x0199, 0               ,                                                             NULL,            NULL,          NULL,  NULL,               NULL,                    NULL, NULL, NULL,  true, false },
-  { "SOFTWARE_VERSION"                            , 0x019a, 0               ,                                                             NULL,            NULL,          NULL,  NULL,               NULL,                    NULL, NULL, NULL,  true, false },
+  { "SOFTWARE_NUMMER"                             , 0x0199, 0               ,                                                             NULL,            NULL,          NULL,  NULL,               NULL,                    NULL, NULL, NULL, false, false },
+  { "SOFTWARE_VERSION"                            , 0x019a, 0               ,                                                             NULL,            NULL,          NULL,  NULL,               NULL,                    NULL, NULL, NULL, false, false },
   // HK1 Pumpe:         0x0001
   // HK2 Punpe:         0x0002
   // Mischer auf:       0x0004
@@ -2000,7 +2000,7 @@ static const ElsterIndex ElsterTable[] =
   { "LZ_VERD_1_WW_BETRIEB"                        , 0x0802, 0               ,                                                             NULL,            NULL,          NULL,  NULL,               NULL,                    NULL, NULL, NULL,  true, false },
   { "LZ_VERD_2_WW_BETRIEB"                        , 0x0803, 0               ,                                                             NULL,            NULL,          NULL,  NULL,               NULL,                    NULL, NULL, NULL,  true, false },
   { "LZ_VERD_1_2_WW_BETRIEB"                      , 0x0804, 0               ,                                                             NULL,            NULL,          NULL,  NULL,               NULL,                    NULL, NULL, NULL,  true, false },
-  { "FATAL_ERROR"                                 , 0x080e, 0               ,                                                             NULL,            NULL,          NULL,  NULL,               NULL,                    NULL, NULL, NULL,  true, false },
+  { "FATAL_ERROR", 0x080e, 0, "FATAL ERROR", "sensor", "", "", "", "mdi:alert-octagon", NULL, NULL, false, true },
   { "LAUFZEIT_VERD_BEI_SPEICHERBEDARF"            , 0x081d, 0               ,                                                             NULL,            NULL,          NULL,  NULL,               NULL,                    NULL, NULL, NULL,  true, false },
   { "FEHLER_PARAMETERSATZ_IWS"                    , 0x0828, 0               ,                                                             NULL,            NULL,          NULL,  NULL,               NULL,                    NULL, NULL, NULL,  true, false },
   { "ZEIT_WAECHTER_UEBERHITZUNG", 0x07ec, 0, "Ueberhitzung Überhitzung", NULL, NULL, NULL, NULL, NULL, NULL, NULL, false, false },
@@ -2009,7 +2009,7 @@ static const ElsterIndex ElsterTable[] =
   { "ND_MASKIERZEIT", 0x07ef, 0, "Nd Maskierzeit", NULL, NULL, NULL, NULL, NULL, NULL, NULL, false, false },
   { "HD_EVE_FUNKTION", 0x07f0, 0, "Hd Eve Funktion", NULL, NULL, NULL, NULL, NULL, NULL, NULL, false, false },
   { "HD_EVE_GRENZWERT_VHD", 0x07f1, 0, "Hd Eve Grenzwert Vhd", NULL, NULL, NULL, NULL, NULL, NULL, NULL, false, false },
-  { "BETRIEBSART_WP", 0x07f2, 0, LNAME_BETRIEBSART_WP, "sensor", "", "", "", "mdi:hvac", NULL, NULL, true, true },
+  { "BETRIEBSART_WP", 0x07f2, 0, LNAME_BETRIEBSART_WP, "sensor", "", "", "", "mdi:hvac", NULL, NULL, false, true },
   { "SOLLWERT_UEBERHITZUNG", 0x07f3, 0, "Sollwert Überhitzung", NULL, NULL, NULL, NULL, NULL, NULL, NULL, false, false },
   { "ISTWERT_UEBERHITZUNG_VERDAMPFER", 0x07f4, 0, "Istwert Überhitzung Verdampfer", NULL, NULL, NULL, NULL, NULL, NULL, NULL, false, false },
   { "ISTWERT_UEBERHITZUNG_REKUPERATOR_KUEHLEN", 0x07f5, 0, "Istwert Überhitzung Rekuperator Kühlen", NULL, NULL, NULL, NULL, NULL, NULL, NULL, false, false },
@@ -2370,7 +2370,7 @@ static const ElsterIndex ElsterTable[] =
   // Pufferladepunpe: 0x0040
   // Quellenpumpe:    0x0100
   // Kühlen:          0x0200
-  { "SAMMEL_RELAISSTATUS"                         , 0x0a20, 0               ,                                                             NULL,            NULL,          NULL,  NULL,               NULL,                    NULL, NULL, NULL,  true, false },
+  { "SAMMEL_RELAISSTATUS", 0x0a20, 0, "Sammel-Relaisstatus", "sensor", "", "", "", "mdi:electric-switch", NULL, NULL, false, true },
   { "MASTERZUGRIFF"                               , 0x0a23, 0               ,                                                             NULL,            NULL,          NULL,  NULL,               NULL,                    NULL, NULL, NULL, false, false },
   { "FEHLERSTRING"                                , 0x0a25, 0               ,                                                             NULL,            NULL,          NULL,  NULL,               NULL,                    NULL, NULL, NULL, false, false },
   { "BUSFEHLER"                                   , 0x0a26, 0               ,                                                             NULL,            NULL,          NULL,  NULL,               NULL,                    NULL, NULL, NULL, false, false },

@@ -174,6 +174,11 @@ static const CalculatedSensorConfig calculatedSensors[] = {
      "sensor", "", "", "total_increasing", "mdi:network-off", "", "", "diagnostic", false},
     {"stiebel_calculated_can_state",      LNAME_CALC_CAN_STATE,      "heatingpump/calculated/can_state/state",
      "sensor", "", "", "", "mdi:can", "", "", "diagnostic", false},
+
+    // Heat-pump manager software, aggregated from SOFTWARE_NUMMER/_VERSION so the two
+    // raw registers do not each create an entity (see updateSensor()).
+    {"stiebel_calculated_wpm_software",   LNAME_CALC_WPM_SOFTWARE,   "heatingpump/calculated/wpm_software/state",
+     "sensor", "", "", "", "mdi:chip", "", "", "diagnostic", true},
 };
 
 static const size_t CALCULATED_SENSOR_COUNT = sizeof(calculatedSensors) / sizeof(CalculatedSensorConfig);
@@ -190,6 +195,7 @@ enum CalcSensorIndex {
     CALC_IDX_CAN_REC,
     CALC_IDX_CAN_BUS_ERRORS,
     CALC_IDX_CAN_STATE,
+    CALC_IDX_WPM_SOFTWARE,
     CALC_SENSOR_INDEX_COUNT
 };
 static_assert(CALC_SENSOR_INDEX_COUNT == CALCULATED_SENSOR_COUNT,
@@ -1310,6 +1316,25 @@ void publishBetriebsart(const std::string& mode)
     publishMqttChecked(stateTopic, mode.c_str(), mode.length(), 0, true);
 }
 
+// WPM manager software. The two raw registers SOFTWARE_NUMMER (0x0199) and
+// SOFTWARE_VERSION (0x019a) are aggregated into one diagnostic text sensor instead
+// of creating two raw entities; both must be known before the value is emitted.
+static std::string lastWpmSoftwareNumber;
+static std::string lastWpmSoftwareVersion;
+
+void publishWpmSoftware()
+{
+    publishCalculatedSensorDiscovery(calculatedSensors[CALC_IDX_WPM_SOFTWARE]);
+
+    if (lastWpmSoftwareNumber.empty() || lastWpmSoftwareVersion.empty()) {
+        return;
+    }
+
+    std::string value = lastWpmSoftwareNumber + " / " + lastWpmSoftwareVersion;
+    const char* stateTopic = "heatingpump/calculated/wpm_software/state";
+    publishMqttChecked(stateTopic, value.c_str(), value.length(), 0, true);
+}
+
 void publishDeltaTContinuous()
 {
     // Publish discovery (only once - cached)
@@ -2103,6 +2128,18 @@ void updateSensor(const CanMember &cm, const ElsterIndex *ei, const std::string 
         publishSignalUnavailable(cm, ei);
         return;
     }
+
+    // Aggregate the two WPM software registers into one text sensor instead of
+    // publishing them as two raw entities (see publishWpmSoftware()).
+    if (strcmp(ei->Name, "SOFTWARE_NUMMER") == 0 || strcmp(ei->Name, "SOFTWARE_VERSION") == 0) {
+        if (strcmp(ei->Name, "SOFTWARE_NUMMER") == 0) {
+            lastWpmSoftwareNumber = value;
+        } else {
+            lastWpmSoftwareVersion = value;
+        }
+        publishWpmSoftware();
+        return;
+    }
     
     // Invert boolean logic for EVU_SPERRE_AKTIV signal
     // CAN: 1 = lock inactive (off), 0 = lock active (on)
@@ -2520,8 +2557,14 @@ void processSignalRequests() {
                 continue;
             }
             
-            // Skip blacklisted signals during initialization (row already resolved)
-            if (ei->isBlacklisted) continue;
+            // A blacklisted register cannot be polled (the filter also runs on every
+            // received frame). Say so instead of skipping silently — this is how
+            // BETRIEBSART_WP sat dead in the WPL13E/WPF10 lists for months.
+            if (ei->isBlacklisted) {
+                ESP_LOGW("REQUEST_MGR", "Signal \"%s\" is blacklisted — not polled (fix ElsterTable.h or the poll list)",
+                         req.signalName);
+                continue;
+            }
             
             unsigned long intervalMs = req.frequency * 1000UL;
             
@@ -2547,13 +2590,15 @@ void processSignalRequests() {
             }
         }
 
-        // Poll the SG-Ready capture-relevant setpoints immediately instead of
-        // spreading them over their (up to 10 min) interval, so a boost applied
-        // shortly after boot captures the REAL device values rather than falling
-        // back to the hardcoded defaults.
+        // Poll a few slow signals immediately instead of spreading them over their
+        // (up to 60 min) interval: the SG-Ready capture setpoints must be real before
+        // a boost shortly after boot, and the static WPM software version should be
+        // available right away rather than up to an hour later.
         for (auto& slot : pollSlots) {
             if (strcmp(slot.signal->Name, "RAUMSOLLTEMP_I") == 0 ||
-                strcmp(slot.signal->Name, "SPEICHERSOLLTEMP") == 0) {
+                strcmp(slot.signal->Name, "SPEICHERSOLLTEMP") == 0 ||
+                strcmp(slot.signal->Name, "SOFTWARE_NUMMER") == 0 ||
+                strcmp(slot.signal->Name, "SOFTWARE_VERSION") == 0) {
                 slot.nextAt = now + getRandomInRange(0, 2000);
             }
         }

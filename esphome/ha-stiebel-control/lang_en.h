@@ -209,6 +209,8 @@
 #define LNAME_CALC_CAN_BUS_ERRORS              "CAN Bus Errors"
 #undef  LNAME_CALC_CAN_STATE
 #define LNAME_CALC_CAN_STATE                   "CAN Bus State"
+#undef  LNAME_CALC_WPM_SOFTWARE
+#define LNAME_CALC_WPM_SOFTWARE                "WPM Software"
 
 // ============================================================================
 // Writable number friendly names

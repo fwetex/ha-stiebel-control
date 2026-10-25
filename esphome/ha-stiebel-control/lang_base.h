@@ -114,6 +114,7 @@
 #define LNAME_CALC_CAN_REC                     "CAN RX Fehlerzähler"
 #define LNAME_CALC_CAN_BUS_ERRORS              "CAN Bus Fehler"
 #define LNAME_CALC_CAN_STATE                   "CAN Bus Zustand"
+#define LNAME_CALC_WPM_SOFTWARE                "WPM-Software"
 
 // ============================================================================
 // Writable number friendly names (writableNumbers[])

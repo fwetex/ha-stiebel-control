@@ -9,6 +9,15 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions: [Sem
 
 ### Added
 
+- **Two formerly blacklisted registers are exposed as diagnostics**, after verifying on the WPM3
+  that it actually answers them: `SAMMEL_RELAISSTATUS` (0x0a20, documented relay/pump bitmask) and
+  `FATAL_ERROR` (0x080e). `SOFTWARE_NUMMER`/`SOFTWARE_VERSION` (0x0199/0x019a) are aggregated into
+  one `WPM-Software` text sensor instead of two raw entities. `BETRIEBSART_WP` (0x07f2) is no
+  longer blacklisted either — it is unavailable on the WPM3 but was still requested (and silently
+  skipped) by the WPL13E/WPF10 poll lists. The remaining candidates (`FEHLERMELDUNG`,
+  `SPEICHER_STATUS`, `QUELLENPUMPEN_STATUS`, `HARDWARE_NUMMER`) answer `0x8000` or have an unknown
+  encoding and stay blacklisted. A blacklisted register in a poll list now logs a warning instead
+  of being skipped silently.
 - **Firmware version and build date are visible in Home Assistant.** `make` and CI bake
   `git describe` (`v2.1.1-63-gdf48757`, with `-dirty` for local changes) into
   `esphome.project.version`; every MQTT discovery device block now reports it as `sw_version`

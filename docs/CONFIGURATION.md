@@ -104,6 +104,20 @@ Available automatically on ESP32-S3 / TWAI builds. Not present on MCP2515 builds
 
 TEC/REC above 96 indicates warning level; above 127 the controller enters bus-off.
 
+### Heat-pump diagnostics (formerly blacklisted signals)
+
+Re-enabled on 2026-10-25 after verifying that the WPM3 answers them (the other candidates
+return `0x8000` "not available"; they stay blacklisted).
+
+| Entity ID | Register | Description |
+|-----------|----------|-------------|
+| `sensor.manager_sammel_relaisstatus` | 0x0a20 | Relay/pump bitmask (raw): `0x0001` HK1 pump, `0x0002` HK2 pump, `0x0004` mixer open, `0x0008` mixer closed, `0x0010` source pump, `0x0020` solar pump, `0x0040` 2nd heat generator, `0x0080` circulation pump |
+| `sensor.manager_fatal_error` | 0x080e | Fatal error code from the manager (`0` = none) |
+| `sensor.calculated_wpm_software` | 0x0199 / 0x019a | WPM software number / version, aggregated as `"449 / 6"` |
+
+`BETRIEBSART_WP` (0x07f2) is also no longer blacklisted: it is not available on the WPM3, but the
+WPL13E/WPF10 poll lists request it and it was silently skipped while blacklisted.
+
 ### Mode Selects (select entities)
 
 | Entity ID | Options |

@@ -73,6 +73,17 @@ extern const SignalRequest signalRequests[] = {
     {"WAERMEERTRAG_WW_TAG_KWH",          FREQ_10MIN, cm_heizmodul},
 
     // ========================================================================
+    // DIAGNOSTICS — formerly blacklisted registers, verified readable on the
+    // WPM3 on 2026-10-25 (see the note in ElsterTable.h).
+    // ========================================================================
+    {"SAMMEL_RELAISSTATUS",     FREQ_30S,   cm_manager},
+    {"FATAL_ERROR",             FREQ_1MIN,  cm_manager},
+    // Aggregated into the calculated "WPM-Software" text sensor (no raw entities).
+    // Static values: read once shortly after boot (see the immediate-poll list), then hourly.
+    {"SOFTWARE_NUMMER",         FREQ_60MIN, cm_manager},
+    {"SOFTWARE_VERSION",        FREQ_60MIN, cm_manager},
+
+    // ========================================================================
     // MONITORING — refrigerant pressures
     // These are the only maintenance values this model actually reports.
     // Pruned on 2026-10-18 after logging every poll for 12 minutes:

@@ -643,6 +643,23 @@ TEST_CASE("discovery: every entity path reports firmware version and model", "[m
     checkPayload("cop_gesamt");
 }
 
+TEST_CASE("updateSensor: WPM software registers are aggregated into one text sensor", "[can]") {
+    resetDiscoveryState();
+    const ElsterIndex* num = GetElsterIndex("SOFTWARE_NUMMER");
+    const ElsterIndex* ver = GetElsterIndex("SOFTWARE_VERSION");
+    REQUIRE(num != nullptr);
+    REQUIRE(ver != nullptr);
+
+    updateSensor(CanMembers[cm_manager], num, "449");
+    // Not complete yet, and definitely no raw SOFTWARE_NUMMER entity.
+    CHECK(mqttFindPayload("calculated/wpm_software/state").empty());
+    CHECK(mqttFindPayload("MANAGER/SOFTWARE_NUMMER/state").empty());
+
+    updateSensor(CanMembers[cm_manager], ver, "6");
+    CHECK(mqttFindPayload("calculated/wpm_software/state") == "449 / 6");
+    CHECK(mqttFindPayload("MANAGER/SOFTWARE_VERSION/state").empty());
+}
+
 TEST_CASE("updateSensor: Betriebsart follows PROGRAMMSCHALTER, not SOMMERBETRIEB", "[can]") {
     resetDiscoveryState();
     const ElsterIndex* prog   = GetElsterIndex("PROGRAMMSCHALTER");
