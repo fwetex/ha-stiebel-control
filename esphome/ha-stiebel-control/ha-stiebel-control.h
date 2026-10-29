@@ -2078,7 +2078,17 @@ constexpr uint32_t HASH_WAERMEERTRAG_HEIZ = hash("WAERMEERTRAG_HEIZ_SUM_MWH");
 // These are skipped so Home Assistant does not accumulate ghost entities that
 // are permanently unavailable (and COP/calculated values never use them).
 inline bool isInvalidSignalValue(const std::string &value) {
-    return value == "-255" || value == "?" || value == "--" || value == "-32768";
+    if (value == "-255" || value == "?" || value == "--" || value == "-32768") {
+        return true;
+    }
+    // The table maps only the exact 0x8000 to "-255"; other codes in that family
+    // decode to scaled values (e.g. 0x8004 → "-3276.4" for et_dec_val, "-327.64"
+    // for et_cent_val). No HVAC reading is anywhere near -300, so reject that
+    // range as well — otherwise a "sensor error" becomes a plausible-looking
+    // temperature entity (observed on VORLAUFISTTEMP, 2026-10-29).
+    char* end = nullptr;
+    const double v = strtod(value.c_str(), &end);
+    return end != value.c_str() && *end == '\0' && v <= -300.0;
 }
 
 // Tell Home Assistant that an already-known signal currently has no valid value.

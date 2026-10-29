@@ -84,6 +84,23 @@ extern const SignalRequest signalRequests[] = {
     {"SOFTWARE_VERSION",        FREQ_60MIN, cm_manager},
 
     // ========================================================================
+    // FLOW / DELTA-T
+    // Evaluated on 2026-10-29 with a diagnostic poll of all plausible registers
+    // (DURCHFLUSS_CH/WW, VOLUMENSTROM ×2 members, VOLUMENSTROM_PUMPE_HZK,
+    // WAERMEMENGE, IMPULSRATE, WMZ_MESSUNG_IMPULS, VOLUMENSTROMMESSUNG,
+    // WASSERDRUCK ×3 members, VORLAUFISTTEMP ×3 members, WPVORLAUFIST ×3 members).
+    // Only these two answered; everything else is 0x8000 ("not available") or an
+    // error code (VORLAUFISTTEMP on KESSEL → 0x8004). Do not re-add the rest
+    // without evidence — the WPM3 does not expose pressure or a second flow.
+    // ========================================================================
+    // The only volume-flow register the KESSEL answers. Value is 0 while the
+    // compressor is off; scale/unit still to be determined from Q = 1.163·V̇·ΔT.
+    {"VOLUMENSTROM",            FREQ_30S,   cm_kessel},
+    // Heat-pump flow temperature (the only member that answers); with
+    // RUECKLAUFISTTEMP it feeds the delta_t_continuous/running sensors.
+    {"WPVORLAUFIST",            FREQ_30S,   cm_heizmodul},
+
+    // ========================================================================
     // MONITORING — refrigerant pressures
     // These are the only maintenance values this model actually reports.
     // Pruned on 2026-10-18 after logging every poll for 12 minutes:

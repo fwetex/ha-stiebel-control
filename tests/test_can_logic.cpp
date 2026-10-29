@@ -481,6 +481,22 @@ TEST_CASE("signal cap: blocks NEW signals but keeps updating known ones", "[mqtt
 // A sentinel means "not available" (see isInvalidSignalValue). For an entity that
 // already exists in HA, publishing `None` makes it read as unknown; an empty
 // payload would be IGNORED for numeric sensors and would leave the stale value.
+TEST_CASE("isInvalidSignalValue: scaled 0x800x sentinels are rejected", "[can]") {
+    CHECK(isInvalidSignalValue("-255"));
+    CHECK(isInvalidSignalValue("?"));
+    CHECK(isInvalidSignalValue("--"));
+    CHECK(isInvalidSignalValue("-32768"));
+    // 0x8004 decodes to these for the scaled types — a "sensor error", not -3276 °C
+    CHECK(isInvalidSignalValue("-3276.4"));
+    CHECK(isInvalidSignalValue("-327.64"));
+    // real values and text must survive
+    CHECK_FALSE(isInvalidSignalValue("22.9"));
+    CHECK_FALSE(isInvalidSignalValue("-25.5"));
+    CHECK_FALSE(isInvalidSignalValue("0"));
+    CHECK_FALSE(isInvalidSignalValue("Komfortbetrieb"));
+    CHECK_FALSE(isInvalidSignalValue(""));
+}
+
 TEST_CASE("sentinel value: known signal publishes 'None', not a stale reading", "[mqtt]") {
     resetDiscoveryState();
     uidCache.clear();

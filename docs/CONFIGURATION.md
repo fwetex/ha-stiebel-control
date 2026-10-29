@@ -118,6 +118,19 @@ return `0x8000` "not available"; they stay blacklisted).
 `BETRIEBSART_WP` (0x07f2) is also no longer blacklisted: it is not available on the WPM3, but the
 WPL13E/WPF10 poll lists request it and it was silently skipped while blacklisted.
 
+### Flow and flow temperature
+
+| Entity ID | Register | Description |
+|-----------|----------|-------------|
+| `sensor.kessel_volumenstrom` | 0x01da (KESSEL) | The only volume-flow register the WPM3 answers. Reads 0 while the compressor is off; scale/unit still to be determined from `Q = 1.163 · V̇ · ΔT`. |
+| `sensor.heizmodul_wpvorlaufist` | 0x01d6 (HEIZMODUL) | Heat-pump flow temperature. Together with `RUECKLAUFISTTEMP` it feeds `delta_t_continuous` / `delta_t_running` (which were dead before because no flow temperature was polled). |
+
+Everything else tried on 2026-10-29 answered `0x8000` ("not available") and is **not** polled:
+`DURCHFLUSS_CH`/`DURCHFLUSS_WW`, `VOLUMENSTROM` on HEIZMODUL, `VOLUMENSTROM_PUMPE_HZK`,
+`WAERMEMENGE`, `IMPULSRATE`, `WMZ_MESSUNG_IMPULS`, `VOLUMENSTROMMESSUNG`, `WASSERDRUCK` (KESSEL,
+WPM3, HEIZMODUL) and `VORLAUFISTTEMP` (all members; KESSEL returns error code `0x8004`). The WPM3
+does not expose water pressure or a second flow value over CAN.
+
 ### Mode Selects (select entities)
 
 | Entity ID | Options |

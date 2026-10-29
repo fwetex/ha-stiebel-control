@@ -95,6 +95,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions: [Sem
 
 ### Fixed
 
+- **"Not available" codes outside `0x8000` were published as real readings.** The decoder maps
+  only the exact `0x8000` to `-255`; other codes in that family decode to scaled values, e.g.
+  `VORLAUFISTTEMP` returning `0x8004` became **-3276.4 °C** and created a plausible-looking
+  temperature entity. `isInvalidSignalValue()` now rejects scaled sentinels (≤ -300, physically
+  impossible for any HVAC reading) as well.
 - **The calculated "Betriebsart" sensor invented "Sommerbetrieb" while the pump ran in
   Komfortbetrieb.** It was derived from `SOMMERBETRIEB` (0xfdb4), which on the WPM3 is only the
   summer-mode **enable** setting, not the active state. Verified on the device: the register reads
